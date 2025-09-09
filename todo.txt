@@ -1,0 +1,6 @@
+we will make program just like notion or obsidian that can take a note.
+But this program will mainly focus on collecting and connecting between notes.
+Here, note will need 'problem',  'solution' section for must, and 'limit', 'details' section as optional.
+So, if user writes problem and solution included note, program will automatically finds similar problems and solutions and list it, and also finds similar problem to solution suggested note and connect it before/after new note.
+To make this program, notes will be saved in local file storage and it will be also saved as database that has 'problem' and 'solution' object when user saves or updates file storage.
+For ui, it will be similar to notion so build it with web, but will be converted to local program afterwards.
