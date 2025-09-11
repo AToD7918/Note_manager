@@ -39,6 +39,18 @@ body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
 .btn.primary { background: var(--accent); border-color: var(--accent); color:#06210f; font-weight:700 }
 .btn.danger { background:#7f1d1d; border-color:#7f1d1d; color:#fee2e2; }
 .btn.danger:hover { background:#991b1b }
+.btn.error { background:#991b1b; border-color:#991b1b; color:#fee2e2; }
+.shake { animation: shake 0.4s linear 1; }
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  50% { transform: translateX(4px); }
+  75% { transform: translateX(-2px); }
+}
+.bubble {
+  display:block; width:fit-content; margin:8px 0 0 auto; padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:#0b1220; color:#e2e8f0; font-size:12px; text-align:right; max-width:100%;
+}
+.builder { text-align:left; }
 .main { flex:1; display:flex; min-height:0; }
 .editor { flex:1; display:flex; flex-direction:column; min-height:0; }
 .editor-header { display:flex; gap:12px; align-items:center; padding:12px; border-bottom:1px solid var(--border); }

@@ -150,11 +150,13 @@ export default function App() {
   const [sortBy, setSortBy] = useState('updated') // updated | title | subject
   const [contentQuery, setContentQuery] = useState('')
   const [contentResults, setContentResults] = useState([])
-  const [view, setView] = useState('notes') // notes | sorts | graph
+  const [view, setView] = useState('notes') // notes | subjects | sort | graph
   const [subjects, setSubjects] = useState([])
+  const [sortMode, setSortMode] = useState('subject') // subject | title | updated
 
   const selected = useMemo(() => notes.find(n=>n.id===selectedId) || null, [notes, selectedId])
   const [draft, setDraft] = useState({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', status: '', priority: '', due_date: '', tags: '', props: {} })
+  const isNew = !selected
   const subjLc = (draft.subject || '').toLowerCase()
   const isPaper = subjLc === 'paper'
   const isPlainNote = subjLc === 'plain-note' || subjLc === 'plain note'
@@ -163,6 +165,7 @@ export default function App() {
   const schemaFields = (currentSubject?.schema?.fields && Array.isArray(currentSubject.schema.fields)) ? currentSubject.schema.fields : []
   const usesSchema = !!draft.subject && schemaFields.length > 0 && !isIdea
   const isCustomSubject = !!draft.subject && !isPaper && !isPlainNote && !isIdea
+  const showSubjectSpecificFields = !isNew || !!draft.subject
   const [ideaStage, setIdeaStage] = useState(1) // 1: Quick Capture, 2: Idea Card, 3: Detailed Plan
 
   useEffect(() => {
@@ -271,6 +274,7 @@ export default function App() {
   }, [contentQuery])
 
   async function handleSave() {
+    if (isNew && !draft.subject) { alert('Please select a subject'); return }
     if (isPlainNote) {
       if (!draft.details || !draft.details.trim()) { alert('Notes are required'); return }
     } else if (isPaper) {
@@ -436,7 +440,8 @@ export default function App() {
     <div className="app">
       <div className="topnav">
         <button className={`tab ${view==='notes' ? 'active' : ''}`} onClick={()=>setView('notes')}>Notes</button>
-        <button className={`tab ${view==='sorts' ? 'active' : ''}`} onClick={()=>setView('sorts')}>Subjects</button>
+        <button className={`tab ${view==='subjects' ? 'active' : ''}`} onClick={()=>setView('subjects')}>Subjects</button>
+        <button className={`tab ${view==='sort' ? 'active' : ''}`} onClick={()=>setView('sort')}>Sort</button>
         <button className={`tab ${view==='graph' ? 'active' : ''}`} onClick={()=>setView('graph')}>Graph</button>
       </div>
       <div className={`content-row ${view==='notes' ? '' : 'hidden'}`}>
@@ -472,10 +477,10 @@ export default function App() {
                     {subjects.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
                     {draft.subject && !subjects.find(s=>s.name===draft.subject) && <option value={draft.subject}>{draft.subject}</option>}
                   </select>
-                  <button className="btn" onClick={()=>setView('sorts')}>Manage</button>
+                  <button className="btn" onClick={()=>setView('subjects')}>Manage</button>
                 </div>
               </div>
-              {isPaper && !usesSchema && (
+              {showSubjectSpecificFields && isPaper && !usesSchema && (
                 <LabelInput
                   label="Link"
                   value={draft.props?.link || ''}
@@ -484,7 +489,7 @@ export default function App() {
                   textarea={false}
                 />
               )}
-              {usesSchema ? (
+              {showSubjectSpecificFields && usesSchema ? (
                 <>
                   {schemaFields.length === 0 && (
                     <div className="muted" style={{ marginBottom: 8 }}>No fields defined for this subject. Add fields in Subjects.</div>
@@ -539,9 +544,9 @@ export default function App() {
                     return <LabelInput key={key} label={label} value={val} onChange={setVal} placeholder="" textarea={false} />
                   })}
                 </>
-              ) : isPlainNote ? (
+              ) : showSubjectSpecificFields && isPlainNote ? (
                 <LabelInput label="Notes" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Write your notes..." />
-              ) : isIdea ? (
+              ) : showSubjectSpecificFields && isIdea ? (
               <>
                 <div className="field">
                   <label>{`Stage ${ideaStage} of 3`}: {ideaStage === 1 ? 'Quick Capture' : ideaStage === 2 ? 'Idea Card' : 'Detailed Plan'}</label>
@@ -703,7 +708,7 @@ export default function App() {
                   {ideaStage === 2 && <button className="btn" onClick={()=>setIdeaStage(3)}>Detailed Plan</button>}
                 </div>
               </>
-              ) : (
+              ) : showSubjectSpecificFields ? (
               <>
                 <LabelInput label="Problem" required value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="Describe the problem..." />
                 <LabelInput label="Solution" required value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="Describe the solution..." />
@@ -742,25 +747,44 @@ export default function App() {
                   <CustomProps propsObj={draft.props} onChange={obj=>setDraft({ ...draft, props: obj })} />
                 </div>
               </>
-              )}
+              ) : null}
             </div>
-            {isPaper ? (
+            {showSubjectSpecificFields && isPaper ? (
               <Suggestions data={selected ? similar : null} onSelect={setSelectedId} />
-            ) : isIdea ? (
+            ) : showSubjectSpecificFields && isIdea ? (
               <SuggestionPlaceholder message="Ideas can later be used as solutions for papers. Save this idea and link it from a paper." />
             ) : null}
           </div>
         </div>
       </div>
       </div>
-      <div className={`sorts-view ${view==='sorts' ? '' : 'hidden'}`}>
+      <div className={`sorts-view ${view==='subjects' ? '' : 'hidden'}`}>
         <div className="sorts-panel">
-          <SubjectManager subjects={subjects} onChange={setSubjects} onSelectSubject={(name)=>{ setQuery(name); setView('notes'); }} />
+          <SubjectManager subjects={subjects} notes={notes} onChange={setSubjects} />
+        </div>
+      </div>
+
+      <div className={`sorts-view ${view==='sort' ? '' : 'hidden'}`}>
+        <div className="sorts-panel">
+          <div className="sm-row" style={{ marginBottom: 12 }}>
+            <label style={{ alignSelf:'center', color:'var(--muted)' }}>Sort by</label>
+            <select className="sort-select" value={sortMode} onChange={e=>setSortMode(e.target.value)}>
+              <option value="subject">Subject</option>
+              <option value="title">Title</option>
+              <option value="updated">Updated</option>
+            </select>
+          </div>
           <div className="groups">
-            {subjects.map(s => (
-              <Group key={s.name} title={s.name} items={notes.filter(n=> (n.subject||'') === s.name)} onOpen={id=>{ setSelectedId(id); setView('notes'); }} />
-            ))}
-            <Group title="Uncategorized/Other" items={notes.filter(n=> !n.subject || !subjects.find(s=>s.name===n.subject))} onOpen={id=>{ setSelectedId(id); setView('notes'); }} />
+            {sortMode === 'subject' ? (
+              <>
+                {subjects.map(s => (
+                  <Group key={s.name} title={s.name} items={notes.filter(n=> (n.subject||'') === s.name)} onOpen={id=>{ setSelectedId(id); setView('notes'); }} />
+                ))}
+                <Group title="Uncategorized/Other" items={notes.filter(n=> !n.subject || !subjects.find(s=>s.name===n.subject))} onOpen={id=>{ setSelectedId(id); setView('notes'); }} />
+              </>
+            ) : (
+              <Group title={`All Notes (${sortMode})`} items={sortNotes(notes, sortMode)} onOpen={id=>{ setSelectedId(id); setView('notes'); }} />
+            )}
           </div>
         </div>
       </div>
@@ -769,10 +793,14 @@ export default function App() {
   )
 }
 
-function SubjectManager({ subjects, onChange, onSelectSubject }) {
+function SubjectManager({ subjects, notes, onChange }) {
   const [name, setName] = useState('')
   const [showBuilder, setShowBuilder] = useState(false)
+  const [mode, setMode] = useState('create') // create | edit
+  const [selected, setSelected] = useState(null)
   const [fields, setFields] = useState([]) // {title:'', type:'text'}
+  const [saveError, setSaveError] = useState('')
+  const [shake, setShake] = useState(false)
   async function reload() {
     try { const r = await fetch('/api/subjects'); const subs = await r.json(); onChange(subs||[]) } catch {}
   }
@@ -785,12 +813,12 @@ function SubjectManager({ subjects, onChange, onSelectSubject }) {
   function removeField(i) {
     setFields(prev => prev.filter((_, idx) => idx!==i))
   }
-  async function add() {
-    // Toggle builder UI
-    setShowBuilder(true)
+  function addNew() {
+    setMode('create'); setSelected(null); setName(''); setFields([]); setShowBuilder(true)
   }
   async function saveSubject() {
-    const n = name.trim(); if (!n) return;
+    const n = (mode === 'edit' ? (selected?.name || '') : name.trim());
+    if (!n) return;
     const normalized = fields.map((f, idx) => {
       const title = (f.title || '').trim() || `Field ${idx+1}`;
       const type = (f.type || 'text').toLowerCase();
@@ -798,25 +826,114 @@ function SubjectManager({ subjects, onChange, onSelectSubject }) {
       return { title, type, key };
     });
     const schema = { fields: normalized };
+    // Validation: prevent incompatible changes if notes exist
+    if (mode === 'edit' && selected) {
+      try {
+        const r = await fetch('/api/notes');
+        const all = await r.json();
+        const related = (all || []).filter(nm => (nm.subject||'').toLowerCase() === (selected.name||'').toLowerCase());
+        if (related.length) {
+          // Build old fields map
+          const oldFields = ((selected.schema && Array.isArray(selected.schema.fields)) ? selected.schema.fields : []).map(f=>({
+            key: (f.key || (f.title||'')).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,''),
+            type: (f.type||'text').toLowerCase(),
+            title: f.title || ''
+          }));
+          const oldMap = new Map(oldFields.map(f=>[f.key, f]));
+          const newMap = new Map(normalized.map(f=>[f.key, f]));
+          const errors = [];
+          const isTextish = t => (t==='text' || t==='textarea' || t==='link' || !t);
+          for (const [k, ofld] of oldMap.entries()) {
+            const nfld = newMap.get(k);
+            // deletion with existing data
+            if (!nfld) {
+              const hasData = related.some(note => {
+                if (k==='problem') return !!(note.problem||'').trim();
+                if (k==='solution') return !!(note.solution||'').trim();
+                if (k==='limit' || k==='limits') return !!(note.limit||'').trim();
+                if (k==='details' || k==='note' || k==='notes') return !!(note.details||'').trim();
+                if (k==='due_date') return !!(note.due_date||'').trim();
+                if (k==='tags' || k==='keywords') return Array.isArray(note.tags) && note.tags.length>0;
+                return !!(((note.props||{})[k]||'').toString().trim());
+              });
+              if (hasData) errors.push({key:k, from:ofld.type, to:'(removed)', reason:'field has data in existing notes'});
+              continue;
+            }
+            // type change incompatibilities
+            const ot = ofld.type; const nt = (nfld.type||'text').toLowerCase();
+            if (ot!==nt) {
+              const conflict = ((ot==='date') !== (nt==='date')) || ((ot==='tags') !== (nt==='tags'));
+              if (conflict) {
+                const hasData = related.some(note => {
+                  if (k==='problem') return !!(note.problem||'').trim();
+                  if (k==='solution') return !!(note.solution||'').trim();
+                  if (k==='limit' || k==='limits') return !!(note.limit||'').trim();
+                  if (k==='details' || k==='note' || k==='notes') return !!(note.details||'').trim();
+                  if (k==='due_date') return !!(note.due_date||'').trim();
+                  if (k==='tags' || k==='keywords') return Array.isArray(note.tags) && note.tags.length>0;
+                  return !!(((note.props||{})[k]||'').toString().trim());
+                });
+                if (hasData) errors.push({key:k, from:ot, to:nt, reason:'incompatible type change with existing data'});
+              }
+            }
+          }
+          if (errors.length) {
+            const msg = errors.map(e=>`Cannot change ${e.key} from ${e.from} to ${e.to}`).join('; ');
+            setSaveError(msg);
+            setShake(true);
+            setTimeout(()=>{ setShake(false); setSaveError(''); }, 2500);
+            return; // abort save
+          }
+        }
+      } catch {}
+    }
     await fetch('/api/subjects', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:n, schema }) })
-    setName(''); setFields([]); setShowBuilder(false); reload();
+    setName(''); setFields([]); setShowBuilder(false); setSelected(null); reload();
   }
   async function remove(n) {
-    await fetch(`/api/subjects/${encodeURIComponent(n)}`, { method:'DELETE' })
-    reload();
+    try {
+      const r = await fetch(`/api/subjects/${encodeURIComponent(n)}`, { method:'DELETE' })
+      if (!r.ok && r.status !== 204) {
+        let msg = 'Delete failed';
+        try { const j = await r.json(); if (j?.error) msg = j.error; } catch {}
+        alert(msg);
+      }
+    } catch (e) {
+      alert('Delete failed');
+    } finally {
+      reload();
+    }
   }
   return (
     <div className="subject-manager">
-      {!showBuilder ? (
-        <div className="sm-row">
-          <input className="sm-input" placeholder="Add subject (e.g., paper, plain-note, idea)" value={name} onChange={e=>setName(e.target.value)} />
-          <button className="btn" onClick={add}>Add</button>
-        </div>
-      ) : (
+      <div className="sm-row" style={{ marginBottom: 8 }}>
+        <button className="btn" onClick={addNew}>Add new subject</button>
+      </div>
+      <div className="chips" style={{ marginBottom: 12 }}>
+        {subjects.map(s => {
+          const isBase = ['paper','plain-note','idea'].includes((s.name||'').toLowerCase());
+          const hasNotes = (notes||[]).some(n=> (n.subject||'').toLowerCase() === (s.name||'').toLowerCase());
+          return (
+            <div key={s.name} className="chip" onClick={()=>{ setMode('edit'); setSelected(s); setName(s.name); setFields(((s.schema&&Array.isArray(s.schema.fields))?s.schema.fields:[])); setShowBuilder(true); }}>
+              <span>{s.name}</span>
+              {!isBase && !hasNotes && (
+                <button className="chip-x" title="Delete" onClick={(e)=>{ e.stopPropagation(); remove(s.name); }}>×</button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {showBuilder && (<>
         <div className="builder">
           <div className="field">
-            <label>Subject Name</label>
-            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Subject name" />
+            {mode==='create' ? (
+              <>
+                <label>Create New Subject</label>
+                <input value={name} onChange={e=>setName(e.target.value)} placeholder="Subject name" />
+              </>
+            ) : (
+              <label>Subject: {name}</label>
+            )}
           </div>
           <div className="field">
             <label>Fields</label>
@@ -845,24 +962,17 @@ function SubjectManager({ subjects, onChange, onSelectSubject }) {
           <div className="sm-row" style={{ marginTop: 8 }}>
             <button className="btn" onClick={addField}>+ Field</button>
             <div style={{ flex:1 }}></div>
-            <button className="btn" onClick={()=>{ setShowBuilder(false); setFields([]); }}>Cancel</button>
-            <button className="btn primary" onClick={saveSubject}>Save Subject</button>
+            <button className="btn" onClick={()=>{ setShowBuilder(false); setFields([]); setSelected(null); setMode('create'); }}>Close</button>
+            <button className={`btn ${shake ? 'error shake' : 'primary'}`} onClick={saveSubject} disabled={mode==='edit' && ['paper','plain-note','idea'].includes((name||'').toLowerCase())}>{mode==='create' ? 'Save Subject' : 'Save Changes'}</button>
           </div>
+          {mode==='edit' && ['paper','plain-note','idea'].includes((name||'').toLowerCase()) && (
+            <div className="muted" style={{ marginTop: 6 }}>Base subjects cannot be modified.</div>
+          )}
         </div>
-      )}
-      <div className="chips">
-        {subjects.map(s => {
-          const isBase = ['paper','plain-note','idea'].includes((s.name||'').toLowerCase());
-          return (
-            <div key={s.name} className="chip" onClick={()=>onSelectSubject(s.name)}>
-              <span>{s.name}</span>
-              {!isBase && (
-                <button className="chip-x" title="Delete" onClick={(e)=>{ e.stopPropagation(); remove(s.name); }}>×</button>
-              )}
-            </div>
-          )
-        })}
-      </div>
+        {!!saveError && (
+          <div className="bubble">{saveError}</div>
+        )}
+      </>)}
     </div>
   )
 }

@@ -335,6 +335,12 @@ app.delete('/api/subjects/:name', (req, res) => {
   if (BASE_SUBJECTS.includes(name.toLowerCase())) {
     return res.status(400).json({ error: 'cannot delete base subject' });
   }
+  try {
+    const cnt = db.prepare('SELECT COUNT(1) as c FROM notes WHERE subject=?').get(name)?.c || 0;
+    if (cnt > 0) {
+      return res.status(400).json({ error: `cannot delete subject with existing notes (${cnt})` });
+    }
+  } catch {}
   db.prepare('DELETE FROM subjects WHERE name=?').run(name);
   res.status(204).end();
 });

@@ -5,7 +5,7 @@
     "fields": [
       {
         "title": "00000",
-        "type": "text",
+        "type": "date",
         "key": "00000"
       }
     ]
