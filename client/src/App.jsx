@@ -160,7 +160,8 @@ export default function App() {
   const isPlainNote = subjLc === 'plain-note' || subjLc === 'plain note'
   const isIdea = (draft.subject || '').toLowerCase() === 'idea'
   const currentSubject = useMemo(() => subjects.find(s => (s.name||'').toLowerCase() === subjLc) || null, [subjects, subjLc])
-  const customFields = (currentSubject?.schema?.fields && Array.isArray(currentSubject.schema.fields)) ? currentSubject.schema.fields : []
+  const schemaFields = (currentSubject?.schema?.fields && Array.isArray(currentSubject.schema.fields)) ? currentSubject.schema.fields : []
+  const usesSchema = !!draft.subject && schemaFields.length > 0 && !isIdea
   const isCustomSubject = !!draft.subject && !isPaper && !isPlainNote && !isIdea
   const [ideaStage, setIdeaStage] = useState(1) // 1: Quick Capture, 2: Idea Card, 3: Detailed Plan
 
@@ -171,17 +172,17 @@ export default function App() {
 
   // When switching to a custom subject on a new note, initialize its fields
   useEffect(() => {
-    if (!isCustomSubject) return;
+    if (!usesSchema) return;
     // Only auto-initialize for new notes (no selection)
     if (selected) return;
     const nextProps = { ...(draft.props || {}) };
     let changed = false;
-    (customFields || []).forEach((f, idx) => {
+    (schemaFields || []).forEach((f, idx) => {
       const key = (f.key || (f.title || `field_${idx}`)).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
       if (!(key in nextProps)) { nextProps[key] = ''; changed = true; }
     })
     if (changed) setDraft(prev => ({ ...prev, props: nextProps }))
-  }, [isCustomSubject, customFields, selected])
+  }, [usesSchema, schemaFields, selected])
 
   useEffect(() => { (async () => {
     const data = await api.list();
@@ -474,7 +475,7 @@ export default function App() {
                   <button className="btn" onClick={()=>setView('sorts')}>Manage</button>
                 </div>
               </div>
-              {isPaper && !isPlainNote && (
+              {isPaper && !usesSchema && (
                 <LabelInput
                   label="Link"
                   value={draft.props?.link || ''}
@@ -483,7 +484,62 @@ export default function App() {
                   textarea={false}
                 />
               )}
-              {isPlainNote ? (
+              {usesSchema ? (
+                <>
+                  {schemaFields.length === 0 && (
+                    <div className="muted" style={{ marginBottom: 8 }}>No fields defined for this subject. Add fields in Subjects.</div>
+                  )}
+                  {schemaFields.map((f, idx) => {
+                    const rawKey = f.key || (f.title || `field_${idx}`)
+                    const key = rawKey.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+                    const type = (f.type || 'text').toLowerCase()
+                    const label = f.title || key
+                    // Map special keys to top-level fields
+                    if (key === 'problem') {
+                      return <LabelInput key={key} label={label} value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="" />
+                    }
+                    if (key === 'solution') {
+                      return <LabelInput key={key} label={label} value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="" />
+                    }
+                    if (key === 'limit' || key === 'limits') {
+                      return <LabelInput key={key} label={label} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="" />
+                    }
+                    if (key === 'details' || key === 'note' || key === 'notes') {
+                      return <LabelInput key={key} label={label} value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="" />
+                    }
+                    if (type === 'tags' || key === 'tags' || key === 'keywords') {
+                      return (
+                        <div className="prop wide" key={key}>
+                          <label>{label} (comma separated)</label>
+                          <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
+                        </div>
+                      )
+                    }
+                    if (type === 'date') {
+                      const propVal = (draft.props || {})[key]
+                      const val = (draft[key] ?? propVal) || (key==='due_date' ? draft.due_date : '')
+                      const setVal = (v) => {
+                        if (key === 'due_date') setDraft({ ...draft, due_date: v })
+                        else setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
+                      }
+                      return (
+                        <div className="field" key={key}>
+                          <label>{label}</label>
+                          <input type="date" value={val} onChange={e=>setVal(e.target.value)} />
+                        </div>
+                      )
+                    }
+                    if (type === 'textarea') {
+                      const val = (draft.props || {})[key] || ''
+                      return <LabelInput key={key} label={label} value={val} onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })} placeholder="" rows={5} />
+                    }
+                    // link/text default to single-line
+                    const val = key === 'link' ? (draft.props?.link || '') : ((draft.props || {})[key] || '')
+                    const setVal = (v) => setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
+                    return <LabelInput key={key} label={label} value={val} onChange={setVal} placeholder="" textarea={false} />
+                  })}
+                </>
+              ) : isPlainNote ? (
                 <LabelInput label="Notes" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Write your notes..." />
               ) : isIdea ? (
               <>
@@ -613,43 +669,6 @@ export default function App() {
                       rows={3}
                     />
                   </>
-              ) : isCustomSubject ? (
-              <>
-                {customFields.length === 0 && (
-                  <div className="muted" style={{ marginBottom: 8 }}>No fields defined for this subject. Add fields in Subjects.</div>
-                )}
-                {customFields.map((f, idx) => {
-                  const key = f.key || (f.title || `field_${idx}`).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
-                  const val = (draft.props || {})[key] || ''
-                  const setVal = (v) => setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
-                  const type = (f.type || 'text').toLowerCase()
-                  if (type === 'date') {
-                    return (
-                      <div className="field" key={key}>
-                        <label>{f.title || 'Date'}</label>
-                        <input type="date" value={val} onChange={e=>setVal(e.target.value)} />
-                      </div>
-                    )
-                  }
-                  if (type === 'textarea') {
-                    return (
-                      <LabelInput key={key} label={f.title || 'Details'} value={val} onChange={setVal} placeholder="" rows={5} />
-                    )
-                  }
-                  if (type === 'tags') {
-                    return (
-                      <div className="prop wide" key={key}>
-                        <label>Tags (comma separated)</label>
-                        <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
-                      </div>
-                    )
-                  }
-                  // text, link, tags default to input
-                  return (
-                    <LabelInput key={key} label={f.title || 'Field'} value={val} onChange={setVal} placeholder="" textarea={false} />
-                  )
-                })}
-              </>
               ) : (
                 <>
                     <div className="field small-title"><label>Detailed Plan</label></div>

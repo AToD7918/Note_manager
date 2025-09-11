@@ -1,0 +1,28 @@
+{
+  "name": "3312",
+  "created_at": "2025-09-11T16:42:21.983Z",
+  "schema": {
+    "fields": [
+      {
+        "title": "ㅁㄴㅇㄻㄴ",
+        "type": "text",
+        "key": "field_1"
+      },
+      {
+        "title": "ㅇㅇㅇㅇㅇ",
+        "type": "textarea",
+        "key": "field_2"
+      },
+      {
+        "title": "3ㅈㄹㄷ",
+        "type": "link",
+        "key": "3"
+      },
+      {
+        "title": "ㅁㄴㅇㄹㄴㄴ",
+        "type": "tags",
+        "key": "field_4"
+      }
+    ]
+  }
+}
