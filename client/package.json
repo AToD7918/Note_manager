@@ -9,6 +9,7 @@
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
+    "note-manager": "file:..",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
