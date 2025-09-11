@@ -1,0 +1,11 @@
+{
+  "watch": ["src"],
+  "ignore": [
+    "data/**",
+    "../notes/**",
+    "node_modules/**",
+    "../client/**"
+  ],
+  "ext": "js,json"
+}
+

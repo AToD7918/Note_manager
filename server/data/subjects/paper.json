@@ -1,0 +1,38 @@
+{
+  "name": "paper",
+  "created_at": "2025-09-09T06:46:12.009Z",
+  "schema": {
+    "fields": [
+      {
+        "title": "Link",
+        "type": "link",
+        "key": "link"
+      },
+      {
+        "title": "Problem",
+        "type": "textarea",
+        "key": "problem"
+      },
+      {
+        "title": "Solution",
+        "type": "textarea",
+        "key": "solution"
+      },
+      {
+        "title": "Limits",
+        "type": "textarea",
+        "key": "limit"
+      },
+      {
+        "title": "Details",
+        "type": "textarea",
+        "key": "details"
+      },
+      {
+        "title": "Keywords",
+        "type": "tags",
+        "key": "keywords"
+      }
+    ]
+  }
+}

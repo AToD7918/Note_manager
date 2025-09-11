@@ -20,13 +20,44 @@ app.use(bodyParser.json({ limit: '2mb' }));
 // Data paths
 const dataDir = path.resolve(__dirname, '..', 'data');
 const fileNotesDir = path.resolve(__dirname, '..', '..', 'notes');
+const subjectsDir = path.resolve(dataDir, 'subjects');
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(fileNotesDir, { recursive: true });
+fs.mkdirSync(subjectsDir, { recursive: true });
 
 // DB setup
 const dbPath = path.join(dataDir, 'notes.db');
 const db = new Database(dbPath);
 const BASE_SUBJECTS = ['paper', 'plain-note', 'idea'];
+const BASE_SUBJECT_SCHEMAS = {
+  'paper': {
+    fields: [
+      { title: 'Link', type: 'link', key: 'link' },
+      { title: 'Problem', type: 'textarea', key: 'problem' },
+      { title: 'Solution', type: 'textarea', key: 'solution' },
+      { title: 'Limits', type: 'textarea', key: 'limit' },
+      { title: 'Details', type: 'textarea', key: 'details' },
+      { title: 'Keywords', type: 'tags', key: 'keywords' }
+    ]
+  },
+  'plain-note': {
+    fields: [
+      { title: 'Notes', type: 'textarea', key: 'details' }
+    ]
+  },
+  'idea': {
+    // Idea uses a multi-stage editor on the client; store a minimal placeholder schema for metadata
+    fields: [
+      { title: 'Summary of Idea', type: 'textarea', key: 'idea_summary' }
+    ]
+  }
+};
+
+function writeSubjectFile(name, created_at, schema) {
+  const obj = { name, created_at, schema };
+  const p = path.join(subjectsDir, `${name}.json`);
+  try { fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf-8'); } catch {}
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS notes (
@@ -54,14 +85,19 @@ CREATE TABLE IF NOT EXISTS subjects (
 
 // Migrations: add missing columns if table existed before
 try {
-  const cols = db.prepare('PRAGMA table_info(notes)').all().map(r => r.name);
-  const add = (name, type) => { if (!cols.includes(name)) db.exec(`ALTER TABLE notes ADD COLUMN ${name} ${type}`); };
-  add('subject', 'TEXT');
-  add('status', 'TEXT');
-  add('priority', 'INTEGER');
-  add('due_date', 'TEXT');
-  add('tags_json', 'TEXT');
-  add('meta_json', 'TEXT');
+  // Notes table migrations
+  const noteCols = db.prepare('PRAGMA table_info(notes)').all().map(r => r.name);
+  const addNoteCol = (name, type) => { if (!noteCols.includes(name)) db.exec(`ALTER TABLE notes ADD COLUMN ${name} ${type}`); };
+  addNoteCol('subject', 'TEXT');
+  addNoteCol('status', 'TEXT');
+  addNoteCol('priority', 'INTEGER');
+  addNoteCol('due_date', 'TEXT');
+  addNoteCol('tags_json', 'TEXT');
+  addNoteCol('meta_json', 'TEXT');
+
+  // Subjects table migrations
+  const subCols = db.prepare('PRAGMA table_info(subjects)').all().map(r => r.name);
+  if (!subCols.includes('schema_json')) db.exec('ALTER TABLE subjects ADD COLUMN schema_json TEXT');
 } catch (e) {
   console.error('Migration check failed:', e);
 }
@@ -77,8 +113,17 @@ try {
 // Seed base subjects (cannot be deleted)
 try {
   const now = new Date().toISOString();
-  const stmt = db.prepare('INSERT OR IGNORE INTO subjects (name, created_at) VALUES (?, ?)');
-  for (const name of BASE_SUBJECTS) stmt.run(name, now);
+  const ins = db.prepare('INSERT OR IGNORE INTO subjects (name, created_at, schema_json) VALUES (?, ?, ?)');
+  const upd = db.prepare('UPDATE subjects SET schema_json=? WHERE name=?');
+  const sel = db.prepare('SELECT name, created_at, schema_json FROM subjects WHERE name=?');
+  for (const name of BASE_SUBJECTS) {
+    const baseSchema = BASE_SUBJECT_SCHEMAS[name] || { fields: [] };
+    ins.run(name, now, JSON.stringify(baseSchema));
+    const row = sel.get(name);
+    const hasSchema = !!(row?.schema_json);
+    if (!hasSchema) upd.run(JSON.stringify(baseSchema), name);
+    writeSubjectFile(name, row?.created_at || now, baseSchema);
+  }
 } catch (e) {
   console.error('Seeding subjects failed:', e);
 }
@@ -246,21 +291,43 @@ app.get('/api/search', (req, res) => {
 
 // Subjects API
 app.get('/api/subjects', (req, res) => {
-  const rows = db.prepare('SELECT name, created_at FROM subjects ORDER BY name COLLATE NOCASE').all();
-  res.json(rows);
+  const rows = db.prepare('SELECT name, created_at, schema_json FROM subjects ORDER BY name COLLATE NOCASE').all();
+  const out = rows.map(r => ({
+    name: r.name,
+    created_at: r.created_at,
+    schema: r.schema_json ? (()=>{ try { return JSON.parse(r.schema_json) || {}; } catch { return {}; } })() : {}
+  }));
+  res.json(out);
 });
 
 app.post('/api/subjects', (req, res) => {
   const name = (req.body?.name || '').toString().trim();
+  const schema = req.body?.schema && typeof req.body.schema === 'object' ? req.body.schema : {};
   if (!name) return res.status(400).json({ error: 'name required' });
+  const isBase = BASE_SUBJECTS.includes(name.toLowerCase());
   const now = new Date().toISOString();
   try {
-    db.prepare('INSERT OR IGNORE INTO subjects (name, created_at) VALUES (?, ?)').run(name, now);
+    if (isBase) {
+      // Base subjects cannot be modified
+      const row = db.prepare('SELECT name, created_at, schema_json FROM subjects WHERE name=?').get(name);
+      const payload = {
+        name: row?.name || name,
+        created_at: row?.created_at || now,
+        schema: row?.schema_json ? (()=>{ try { return JSON.parse(row.schema_json) || {}; } catch { return {}; } })() : (BASE_SUBJECT_SCHEMAS[name.toLowerCase()] || {})
+      };
+      writeSubjectFile(payload.name, payload.created_at, payload.schema);
+      return res.status(200).json(payload);
+    }
+    db.prepare('INSERT OR IGNORE INTO subjects (name, created_at, schema_json) VALUES (?, ?, ?)').run(name, now, JSON.stringify(schema));
+    // If existed, update schema
+    db.prepare('UPDATE subjects SET schema_json=? WHERE name=?').run(JSON.stringify(schema), name);
   } catch (e) {
     return res.status(500).json({ error: 'failed to insert' });
   }
-  const row = db.prepare('SELECT name, created_at FROM subjects WHERE name=?').get(name);
-  res.status(201).json(row);
+  const row = db.prepare('SELECT name, created_at, schema_json FROM subjects WHERE name=?').get(name);
+  const out = { name: row.name, created_at: row.created_at, schema: row.schema_json ? (()=>{ try { return JSON.parse(row.schema_json) || {}; } catch { return {}; } })() : {} };
+  writeSubjectFile(out.name, out.created_at, out.schema);
+  res.status(201).json(out);
 });
 
 app.delete('/api/subjects/:name', (req, res) => {

@@ -1,0 +1,13 @@
+{
+  "name": "idea",
+  "created_at": "2025-09-11T05:34:23.925Z",
+  "schema": {
+    "fields": [
+      {
+        "title": "Summary of Idea",
+        "type": "textarea",
+        "key": "idea_summary"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "plain-note",
+  "created_at": "2025-09-11T08:05:56.796Z",
+  "schema": {
+    "fields": [
+      {
+        "title": "Notes",
+        "type": "textarea",
+        "key": "details"
+      }
+    ]
+  }
+}

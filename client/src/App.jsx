@@ -159,12 +159,29 @@ export default function App() {
   const isPaper = subjLc === 'paper'
   const isPlainNote = subjLc === 'plain-note' || subjLc === 'plain note'
   const isIdea = (draft.subject || '').toLowerCase() === 'idea'
+  const currentSubject = useMemo(() => subjects.find(s => (s.name||'').toLowerCase() === subjLc) || null, [subjects, subjLc])
+  const customFields = (currentSubject?.schema?.fields && Array.isArray(currentSubject.schema.fields)) ? currentSubject.schema.fields : []
+  const isCustomSubject = !!draft.subject && !isPaper && !isPlainNote && !isIdea
   const [ideaStage, setIdeaStage] = useState(1) // 1: Quick Capture, 2: Idea Card, 3: Detailed Plan
 
   useEffect(() => {
     // Reset stage when subject changes
     setIdeaStage(1)
   }, [draft.subject])
+
+  // When switching to a custom subject on a new note, initialize its fields
+  useEffect(() => {
+    if (!isCustomSubject) return;
+    // Only auto-initialize for new notes (no selection)
+    if (selected) return;
+    const nextProps = { ...(draft.props || {}) };
+    let changed = false;
+    (customFields || []).forEach((f, idx) => {
+      const key = (f.key || (f.title || `field_${idx}`)).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+      if (!(key in nextProps)) { nextProps[key] = ''; changed = true; }
+    })
+    if (changed) setDraft(prev => ({ ...prev, props: nextProps }))
+  }, [isCustomSubject, customFields, selected])
 
   useEffect(() => { (async () => {
     const data = await api.list();
@@ -270,6 +287,8 @@ export default function App() {
         draft.props?.idea_why || '',
       ].filter(Boolean).join('\n').trim();
       if (!(draft.props?.idea_summary || '').trim()) { alert('Please fill Summary of Idea'); return }
+    } else if (isCustomSubject) {
+      // allow empty custom fields; we'll fallback when building payload
     } else {
       if (!draft.problem || !draft.problem.trim() || !draft.solution || !draft.solution.trim()) { alert('Problem and Solution are required'); return }
     }
@@ -292,6 +311,19 @@ export default function App() {
       const paperFallback = (draft.problem?.trim() || draft.solution?.trim())
         ? ''
         : (draft.details?.trim() || draft.title?.trim() || draft.props?.link || '');
+      // Build custom subject combined text for backend-required fields
+      const customCombined = isCustomSubject ? (() => {
+        try {
+          const parts = (customFields || []).map((f, idx) => {
+            const key = f.key || (f.title || `field_${idx}`).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+            const val = (draft.props || {})[key]
+            const title = f.title || key
+            return (val && String(val).trim()) ? `${title}: ${val}` : ''
+          }).filter(Boolean)
+          return parts.join('\n')
+        } catch { return '' }
+      })() : ''
+
       const payload = {
         title: draft.title,
         subject: draft.subject,
@@ -301,14 +333,18 @@ export default function App() {
             ? (ideaProblem || (draft.props?.idea_summary || ''))
             : isPaper
               ? (draft.problem?.trim() || paperFallback)
-              : draft.problem,
+              : isCustomSubject
+                ? (draft.problem?.trim() || customCombined || draft.details || draft.title || 'Untitled')
+                : draft.problem,
         solution: isPlainNote
           ? (draft.details || '')
           : isIdea
             ? (ideaSolution || (draft.props?.idea_summary || ''))
             : isPaper
               ? (draft.solution?.trim() || paperFallback)
-              : draft.solution,
+              : isCustomSubject
+                ? (draft.solution?.trim() || customCombined || draft.details || draft.title || 'Untitled')
+                : draft.solution,
         limit: isPlainNote ? '' : (isIdea ? ideaLimit : draft.limit),
         details: isIdea
           ? [
@@ -338,7 +374,9 @@ export default function App() {
                 return parts ? `Detailed Plan:\n\n${parts}` : '';
               })()
             ].filter(Boolean).join('\n\n')
-          : draft.details,
+          : isCustomSubject
+            ? [customCombined, draft.details].filter(Boolean).join('\n\n')
+            : draft.details,
         status: draft.status,
         priority: draft.priority === '' ? '' : Number(draft.priority),
         due_date: draft.due_date,
@@ -397,7 +435,7 @@ export default function App() {
     <div className="app">
       <div className="topnav">
         <button className={`tab ${view==='notes' ? 'active' : ''}`} onClick={()=>setView('notes')}>Notes</button>
-        <button className={`tab ${view==='sorts' ? 'active' : ''}`} onClick={()=>setView('sorts')}>Sorts</button>
+        <button className={`tab ${view==='sorts' ? 'active' : ''}`} onClick={()=>setView('sorts')}>Subjects</button>
         <button className={`tab ${view==='graph' ? 'active' : ''}`} onClick={()=>setView('graph')}>Graph</button>
       </div>
       <div className={`content-row ${view==='notes' ? '' : 'hidden'}`}>
@@ -575,8 +613,45 @@ export default function App() {
                       rows={3}
                     />
                   </>
-                ) : (
-                  <>
+              ) : isCustomSubject ? (
+              <>
+                {customFields.length === 0 && (
+                  <div className="muted" style={{ marginBottom: 8 }}>No fields defined for this subject. Add fields in Subjects.</div>
+                )}
+                {customFields.map((f, idx) => {
+                  const key = f.key || (f.title || `field_${idx}`).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+                  const val = (draft.props || {})[key] || ''
+                  const setVal = (v) => setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
+                  const type = (f.type || 'text').toLowerCase()
+                  if (type === 'date') {
+                    return (
+                      <div className="field" key={key}>
+                        <label>{f.title || 'Date'}</label>
+                        <input type="date" value={val} onChange={e=>setVal(e.target.value)} />
+                      </div>
+                    )
+                  }
+                  if (type === 'textarea') {
+                    return (
+                      <LabelInput key={key} label={f.title || 'Details'} value={val} onChange={setVal} placeholder="" rows={5} />
+                    )
+                  }
+                  if (type === 'tags') {
+                    return (
+                      <div className="prop wide" key={key}>
+                        <label>Tags (comma separated)</label>
+                        <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
+                      </div>
+                    )
+                  }
+                  // text, link, tags default to input
+                  return (
+                    <LabelInput key={key} label={f.title || 'Field'} value={val} onChange={setVal} placeholder="" textarea={false} />
+                  )
+                })}
+              </>
+              ) : (
+                <>
                     <div className="field small-title"><label>Detailed Plan</label></div>
                     <div className="field small-title"><label>Perpose & hypothesis</label></div>
                     <LabelInput
@@ -677,13 +752,35 @@ export default function App() {
 
 function SubjectManager({ subjects, onChange, onSelectSubject }) {
   const [name, setName] = useState('')
+  const [showBuilder, setShowBuilder] = useState(false)
+  const [fields, setFields] = useState([]) // {title:'', type:'text'}
   async function reload() {
     try { const r = await fetch('/api/subjects'); const subs = await r.json(); onChange(subs||[]) } catch {}
   }
+  function addField() {
+    setFields(prev => [...prev, { title: '', type: 'text' }])
+  }
+  function updateField(i, patch) {
+    setFields(prev => prev.map((f, idx) => idx===i ? { ...f, ...patch } : f))
+  }
+  function removeField(i) {
+    setFields(prev => prev.filter((_, idx) => idx!==i))
+  }
   async function add() {
+    // Toggle builder UI
+    setShowBuilder(true)
+  }
+  async function saveSubject() {
     const n = name.trim(); if (!n) return;
-    await fetch('/api/subjects', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:n }) })
-    setName(''); reload();
+    const normalized = fields.map((f, idx) => {
+      const title = (f.title || '').trim() || `Field ${idx+1}`;
+      const type = (f.type || 'text').toLowerCase();
+      const key = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `field_${idx+1}`;
+      return { title, type, key };
+    });
+    const schema = { fields: normalized };
+    await fetch('/api/subjects', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:n, schema }) })
+    setName(''); setFields([]); setShowBuilder(false); reload();
   }
   async function remove(n) {
     await fetch(`/api/subjects/${encodeURIComponent(n)}`, { method:'DELETE' })
@@ -691,10 +788,49 @@ function SubjectManager({ subjects, onChange, onSelectSubject }) {
   }
   return (
     <div className="subject-manager">
-      <div className="sm-row">
-        <input className="sm-input" placeholder="Add subject (e.g., paper, plain-note, idea)" value={name} onChange={e=>setName(e.target.value)} />
-        <button className="btn" onClick={add}>Add</button>
-      </div>
+      {!showBuilder ? (
+        <div className="sm-row">
+          <input className="sm-input" placeholder="Add subject (e.g., paper, plain-note, idea)" value={name} onChange={e=>setName(e.target.value)} />
+          <button className="btn" onClick={add}>Add</button>
+        </div>
+      ) : (
+        <div className="builder">
+          <div className="field">
+            <label>Subject Name</label>
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Subject name" />
+          </div>
+          <div className="field">
+            <label>Fields</label>
+          </div>
+          {fields.map((f, i) => (
+            <div key={i} className="props-row">
+              <div className="prop wide">
+                <label>Title</label>
+                <input value={f.title} onChange={e=>updateField(i, { title: e.target.value })} placeholder={`Field ${i+1} title`} />
+              </div>
+              <div className="prop">
+                <label>Type</label>
+                <select value={f.type} onChange={e=>updateField(i, { type: e.target.value })}>
+                  <option value="text">text</option>
+                  <option value="textarea">textarea</option>
+                  <option value="date">date</option>
+                  <option value="link">link</option>
+                  <option value="tags">tags</option>
+                </select>
+              </div>
+              <div className="prop" style={{ alignSelf:'flex-end' }}>
+                <button className="btn" onClick={()=>removeField(i)}>Remove</button>
+              </div>
+            </div>
+          ))}
+          <div className="sm-row" style={{ marginTop: 8 }}>
+            <button className="btn" onClick={addField}>+ Field</button>
+            <div style={{ flex:1 }}></div>
+            <button className="btn" onClick={()=>{ setShowBuilder(false); setFields([]); }}>Cancel</button>
+            <button className="btn primary" onClick={saveSubject}>Save Subject</button>
+          </div>
+        </div>
+      )}
       <div className="chips">
         {subjects.map(s => {
           const isBase = ['paper','plain-note','idea'].includes((s.name||'').toLowerCase());
