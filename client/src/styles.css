@@ -62,6 +62,8 @@ body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
 .field { margin-bottom:12px; }
 .field label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
 .field textarea, .field input { width:100%; padding:10px; background:#0b1220; color:var(--text); border:1px solid var(--border); border-radius:8px; }
+.field.small-title label { font-size:16px; color:#e2e8f0; font-weight:600; margin-top:8px; }
+.field.compact textarea { min-height:0; }
 .suggestions { width:360px; border-left:1px solid var(--border); padding:12px; overflow:auto; }
 .sugg-section { margin-bottom:16px; }
 .sugg-section h4 { margin:6px 0 8px; font-size:14px; color:#cbd5e1; }

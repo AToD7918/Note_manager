@@ -26,6 +26,7 @@ fs.mkdirSync(fileNotesDir, { recursive: true });
 // DB setup
 const dbPath = path.join(dataDir, 'notes.db');
 const db = new Database(dbPath);
+const BASE_SUBJECTS = ['paper', 'plain-note', 'idea'];
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS notes (
@@ -63,6 +64,23 @@ try {
   add('meta_json', 'TEXT');
 } catch (e) {
   console.error('Migration check failed:', e);
+}
+
+// Migrate old typo 'plan-note' -> 'plain-note'
+try {
+  db.prepare("UPDATE subjects SET name='plain-note' WHERE LOWER(name)='plan-note'").run();
+  db.prepare("UPDATE notes SET subject='plain-note' WHERE LOWER(subject)='plan-note'").run();
+} catch (e) {
+  console.error('Subject rename migration failed:', e);
+}
+
+// Seed base subjects (cannot be deleted)
+try {
+  const now = new Date().toISOString();
+  const stmt = db.prepare('INSERT OR IGNORE INTO subjects (name, created_at) VALUES (?, ?)');
+  for (const name of BASE_SUBJECTS) stmt.run(name, now);
+} catch (e) {
+  console.error('Seeding subjects failed:', e);
 }
 
 // Utilities
@@ -247,6 +265,9 @@ app.post('/api/subjects', (req, res) => {
 
 app.delete('/api/subjects/:name', (req, res) => {
   const name = (req.params.name || '').toString();
+  if (BASE_SUBJECTS.includes(name.toLowerCase())) {
+    return res.status(400).json({ error: 'cannot delete base subject' });
+  }
   db.prepare('DELETE FROM subjects WHERE name=?').run(name);
   res.status(204).end();
 });

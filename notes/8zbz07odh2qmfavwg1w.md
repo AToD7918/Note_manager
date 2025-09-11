@@ -12,10 +12,7 @@ cranberry
 
 hello 2
 
-## Details
-
-hi 2
 
 ## Metadata
 
-- Subject: banana
+- Subject: paper

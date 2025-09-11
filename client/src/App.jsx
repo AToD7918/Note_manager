@@ -95,12 +95,12 @@ function Sidebar({ notes, selectedId, onSelect, onNew, query, onQueryChange, onS
   )
 }
 
-function LabelInput({ label, required, value, onChange, placeholder, textarea=true }) {
+function LabelInput({ label, required, value, onChange, placeholder, textarea=true, rows=5 }) {
   return (
     <div className="field">
       <label>{label}{required ? ' *' : ''}</label>
       {textarea ? (
-        <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={5} />
+        <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows} />
       ) : (
         <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} />
       )}
@@ -155,6 +155,16 @@ export default function App() {
 
   const selected = useMemo(() => notes.find(n=>n.id===selectedId) || null, [notes, selectedId])
   const [draft, setDraft] = useState({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', status: '', priority: '', due_date: '', tags: '', props: {} })
+  const subjLc = (draft.subject || '').toLowerCase()
+  const isPaper = subjLc === 'paper'
+  const isPlainNote = subjLc === 'plain-note' || subjLc === 'plain note'
+  const isIdea = (draft.subject || '').toLowerCase() === 'idea'
+  const [ideaStage, setIdeaStage] = useState(1) // 1: Quick Capture, 2: Idea Card, 3: Detailed Plan
+
+  useEffect(() => {
+    // Reset stage when subject changes
+    setIdeaStage(1)
+  }, [draft.subject])
 
   useEffect(() => { (async () => {
     const data = await api.list();
@@ -188,10 +198,36 @@ export default function App() {
     }
   }, [selectedId])
 
-  // Live preview suggestions based on draft
+  // Live preview suggestions based on draft/subject (only for papers)
   useEffect(() => {
-    const p = draft.problem?.trim();
-    const s = draft.solution?.trim();
+    if (!isPaper) { setSimilar(null); return }
+    const ideaProblem = [
+      draft.props?.idea_pd_user || '',
+      draft.props?.idea_pd_one || '',
+      draft.props?.idea_pd_constraints || '',
+    ].filter(Boolean).join('\n');
+    const ideaSolution = [
+      draft.props?.idea_hypothesis || '',
+      draft.props?.idea_conclusion || '',
+      draft.props?.idea_why || '',
+    ].filter(Boolean).join('\n');
+    const paperFallback = (draft.details?.trim() || draft.title?.trim() || draft.props?.link || '');
+    const p = (isPlainNote
+      ? (draft.details || '')
+      : isIdea
+        ? (ideaProblem || (draft.props?.idea_summary || ''))
+        : isPaper
+          ? (draft.problem?.trim() || paperFallback)
+          : (draft.problem || '')
+    ).trim();
+    const s = (isPlainNote
+      ? (draft.details || '')
+      : isIdea
+        ? (ideaSolution || (draft.props?.idea_summary || ''))
+        : isPaper
+          ? (draft.solution?.trim() || paperFallback)
+          : (draft.solution || '')
+    ).trim();
     if (!p && !s) { setSimilar(null); return }
     const handle = setTimeout(() => {
       fetch('/api/similar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem: p || '', solution: s || '', excludeId: selectedId || undefined }) })
@@ -200,7 +236,7 @@ export default function App() {
         .catch(()=>{})
     }, 400)
     return () => clearTimeout(handle)
-  }, [draft.problem, draft.solution, selectedId])
+  }, [draft.problem, draft.solution, draft.details, draft.props?.idea_pd_user, draft.props?.idea_pd_one, draft.props?.idea_pd_constraints, draft.props?.idea_hypothesis, draft.props?.idea_conclusion, draft.props?.idea_why, draft.props?.idea_summary, draft.props?.link, draft.title, isPlainNote, isIdea, isPaper, selectedId])
 
   // Content search (all fields)
   useEffect(() => {
@@ -217,16 +253,92 @@ export default function App() {
   }, [contentQuery])
 
   async function handleSave() {
-    if (!draft.problem || !draft.solution) { alert('Problem and Solution are required'); return }
+    if (isPlainNote) {
+      if (!draft.details || !draft.details.trim()) { alert('Notes are required'); return }
+    } else if (isPaper) {
+      const link = (draft.props?.link || '').trim();
+      if (!link) { alert('Link is required for Paper'); return }
+    } else if (isIdea) {
+      const ip = [
+        draft.props?.idea_pd_user || '',
+        draft.props?.idea_pd_one || '',
+        draft.props?.idea_pd_constraints || '',
+      ].filter(Boolean).join('\n').trim();
+      const ih = [
+        draft.props?.idea_hypothesis || '',
+        draft.props?.idea_conclusion || '',
+        draft.props?.idea_why || '',
+      ].filter(Boolean).join('\n').trim();
+      if (!(draft.props?.idea_summary || '').trim()) { alert('Please fill Summary of Idea'); return }
+    } else {
+      if (!draft.problem || !draft.problem.trim() || !draft.solution || !draft.solution.trim()) { alert('Problem and Solution are required'); return }
+    }
     setLoading(true)
     try {
+      const ideaProblem = [
+        draft.props?.idea_pd_user || '',
+        draft.props?.idea_pd_one || '',
+        draft.props?.idea_pd_constraints || '',
+      ].filter(Boolean).join('\n');
+      const ideaSolution = [
+        draft.props?.idea_hypothesis || '',
+        draft.props?.idea_conclusion || '',
+        draft.props?.idea_why || '',
+      ].filter(Boolean).join('\n');
+      const ideaLimit = [
+        draft.props?.idea_risks || '',
+        draft.props?.idea_alternatives || '',
+      ].filter(Boolean).join('\n');
+      const paperFallback = (draft.problem?.trim() || draft.solution?.trim())
+        ? ''
+        : (draft.details?.trim() || draft.title?.trim() || draft.props?.link || '');
       const payload = {
         title: draft.title,
         subject: draft.subject,
-        problem: draft.problem,
-        solution: draft.solution,
-        limit: draft.limit,
-        details: draft.details,
+        problem: isPlainNote
+          ? (draft.details || '')
+          : isIdea
+            ? (ideaProblem || (draft.props?.idea_summary || ''))
+            : isPaper
+              ? (draft.problem?.trim() || paperFallback)
+              : draft.problem,
+        solution: isPlainNote
+          ? (draft.details || '')
+          : isIdea
+            ? (ideaSolution || (draft.props?.idea_summary || ''))
+            : isPaper
+              ? (draft.solution?.trim() || paperFallback)
+              : draft.solution,
+        limit: isPlainNote ? '' : (isIdea ? ideaLimit : draft.limit),
+        details: isIdea
+          ? [
+              draft.props?.idea_summary ? `Summary:\n\n${draft.props?.idea_summary}` : '',
+              (() => {
+                const parts = [
+                  draft.props?.idea_context_why ? `Why did it come to mind?\n\n${draft.props?.idea_context_why}` : '',
+                  draft.props?.idea_context_who ? `Whose problem is it?\n\n${draft.props?.idea_context_who}` : '',
+                  draft.props?.idea_context_assumption ? `Assuming solution idea\n\n${draft.props?.idea_context_assumption}` : '',
+                ].filter(Boolean).join('\n\n');
+                return parts ? `Context:\n\n${parts}` : '';
+              })(),
+              draft.props?.idea_date || draft.props?.idea_link ? `Meta:\n\n${[
+                draft.props?.idea_date ? `Date: ${draft.props?.idea_date}` : '',
+                draft.props?.idea_link ? `Link: ${draft.props?.idea_link}` : ''
+              ].filter(Boolean).join('\n')}` : '',
+              (() => {
+                const perpose = (() => {
+                  const sub = [
+                    draft.props?.idea_dp_hypothesis ? `Hypothesis\n\n${draft.props?.idea_dp_hypothesis}` : '',
+                    draft.props?.idea_dp_result ? `Assuming result\n\n${draft.props?.idea_dp_result}` : '',
+                  ].filter(Boolean).join('\n\n');
+                  return sub ? `Perpose & hypothesis:\n\n${sub}` : '';
+                })();
+                const plan = draft.props?.idea_dp_method ? `Plan:\n\n${draft.props?.idea_dp_method}` : '';
+                const parts = [perpose, plan].filter(Boolean).join('\n\n');
+                return parts ? `Detailed Plan:\n\n${parts}` : '';
+              })()
+            ].filter(Boolean).join('\n\n')
+          : draft.details,
         status: draft.status,
         priority: draft.priority === '' ? '' : Number(draft.priority),
         due_date: draft.due_date,
@@ -324,44 +436,225 @@ export default function App() {
                   <button className="btn" onClick={()=>setView('sorts')}>Manage</button>
                 </div>
               </div>
-              <LabelInput label="Problem" required value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="Describe the problem..." />
-              <LabelInput label="Solution" required value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="Describe the solution..." />
-              <LabelInput label="Limit" value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="Constraints, limitations..." />
-              <LabelInput label="Details" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Additional context..." />
-              <div className="properties">
-                <div className="props-row">
-                  <div className="prop">
-                    <label>Status</label>
-                    <select value={draft.status} onChange={e=>setDraft({ ...draft, status: e.target.value })}>
-                      <option value="">-</option>
-                      <option>idea</option>
-                      <option>doing</option>
-                      <option>done</option>
-                      <option>blocked</option>
-                    </select>
-                  </div>
-                  <div className="prop">
-                    <label>Priority</label>
-                    <select value={draft.priority} onChange={e=>setDraft({ ...draft, priority: e.target.value })}>
-                      <option value="">-</option>
-                      {[1,2,3,4,5].map(n=> <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </div>
-                  <div className="prop">
-                    <label>Due</label>
-                    <input type="date" value={draft.due_date} onChange={e=>setDraft({ ...draft, due_date: e.target.value })} />
-                  </div>
+              {isPaper && !isPlainNote && (
+                <LabelInput
+                  label="Link"
+                  value={draft.props?.link || ''}
+                  onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), link: v } })}
+                  placeholder="https://..."
+                  textarea={false}
+                />
+              )}
+              {isPlainNote ? (
+                <LabelInput label="Notes" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Write your notes..." />
+              ) : isIdea ? (
+              <>
+                <div className="field">
+                  <label>{`Stage ${ideaStage} of 3`}: {ideaStage === 1 ? 'Quick Capture' : ideaStage === 2 ? 'Idea Card' : 'Detailed Plan'}</label>
                 </div>
-                <div className="props-row">
-                  <div className="prop wide">
-                    <label>Tags (comma separated)</label>
-                    <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
-                  </div>
+                {ideaStage === 1 ? (
+                  <>
+                    <div className="field small-title"><label>Summary of Idea</label></div>
+                    <LabelInput
+                      label="Summary"
+                      value={draft.props?.idea_summary || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_summary: v } })}
+                      placeholder="Briefly summarize the idea..."
+                      rows={3}
+                    />
+                    <div className="field small-title">
+                      <label>Context</label>
+                    </div>
+                    <LabelInput
+                      label="Why did it come to mind?"
+                      value={draft.props?.idea_context_why || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_context_why: v } })}
+                      placeholder="Describe the trigger or background..."
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="Whose problem is it?"
+                      value={draft.props?.idea_context_who || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_context_who: v } })}
+                      placeholder="Target user/persona and situation..."
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="Assuming solution idea"
+                      value={draft.props?.idea_context_assumption || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_context_assumption: v } })}
+                      placeholder="What solution idea are you assuming?"
+                      rows={3}
+                    />
+                    <div className="properties">
+                      <div className="props-row">
+                        <div className="prop wide">
+                          <label>Tags (comma separated)</label>
+                          <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
+                        </div>
+                      </div>
+                      <div className="props-row">
+                        <div className="prop">
+                          <label>Link/Screenshot</label>
+                          <input value={draft.props?.idea_link || ''} onChange={e=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_link: e.target.value } })} placeholder="https://..." />
+                        </div>
+                        <div className="prop">
+                          <label>Date</label>
+                          <input type="date" value={draft.props?.idea_date || ''} onChange={e=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_date: e.target.value } })} />
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : ideaStage === 2 ? (
+                  <>
+                    <div className="field small-title">
+                      <label>Problem Definition</label>
+                    </div>
+                    <LabelInput
+                      label="User/Situation"
+                      value={draft.props?.idea_pd_user || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_pd_user: v } })}
+                      placeholder="Who is affected and in what context?"
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="One-Line Problem Statement"
+                      value={draft.props?.idea_pd_one || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_pd_one: v } })}
+                      placeholder="State the core problem in one sentence"
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="Constraints"
+                      value={draft.props?.idea_pd_constraints || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_pd_constraints: v } })}
+                      placeholder="Constraints and limitations"
+                      rows={3}
+                    />
+
+                    <div className="field small-title">
+                      <label>Hypothesis → Consequent</label>
+                    </div>
+                    <LabelInput
+                      label="Hypothesis"
+                      value={draft.props?.idea_hypothesis || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_hypothesis: v } })}
+                      placeholder="Your main hypothesis"
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="Conclusion"
+                      value={draft.props?.idea_conclusion || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_conclusion: v } })}
+                      placeholder="What follows if the hypothesis holds"
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="Why it holds true"
+                      value={draft.props?.idea_why || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_why: v } })}
+                      placeholder="Reasoning or evidence"
+                      rows={3}
+                    />
+
+                    <div className="field small-title">
+                      <label>Risk & Alternatives</label>
+                    </div>
+                    <LabelInput
+                      label="Key Risks"
+                      value={draft.props?.idea_risks || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_risks: v } })}
+                      placeholder="Main risks and unknowns"
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="Alternatives/buffering measures"
+                      value={draft.props?.idea_alternatives || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_alternatives: v } })}
+                      placeholder="Alternative approaches or mitigations"
+                      rows={3}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div className="field small-title"><label>Detailed Plan</label></div>
+                    <div className="field small-title"><label>Perpose & hypothesis</label></div>
+                    <LabelInput
+                      label="Hypothesis"
+                      value={draft.props?.idea_dp_hypothesis || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_dp_hypothesis: v } })}
+                      placeholder="Hypothesis for the plan"
+                      rows={3}
+                    />
+                    <LabelInput
+                      label="Assuming result"
+                      value={draft.props?.idea_dp_result || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_dp_result: v } })}
+                      placeholder="Expected/assumed result"
+                      rows={3}
+                    />
+                    <div className="field small-title"><label>Plan</label></div>
+                    <LabelInput
+                      label="Method"
+                      value={draft.props?.idea_dp_method || ''}
+                      onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), idea_dp_method: v } })}
+                      placeholder="Methods, steps, or protocols"
+                      rows={8}
+                    />
+                  </>
+                )}
+                <div className="field" style={{ display: 'flex', gap: 8 }}>
+                  {ideaStage >= 2 && <button className="btn" onClick={()=>setIdeaStage(ideaStage-1)}>Back</button>}
+                  {ideaStage === 1 && <button className="btn" onClick={()=>setIdeaStage(2)}>Next</button>}
+                  {ideaStage === 2 && <button className="btn" onClick={()=>setIdeaStage(3)}>Detailed Plan</button>}
                 </div>
-                <CustomProps propsObj={draft.props} onChange={obj=>setDraft({ ...draft, props: obj })} />
-              </div>
+              </>
+              ) : (
+              <>
+                <LabelInput label="Problem" required value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="Describe the problem..." />
+                <LabelInput label="Solution" required value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="Describe the solution..." />
+                <LabelInput label={isPaper ? 'Limits' : 'Limit'} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="Constraints, limitations..." />
+                <LabelInput label="Details" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Additional context..." />
+                <div className="properties">
+                  <div className="props-row">
+                    <div className="prop">
+                      <label>Status</label>
+                      <select value={draft.status} onChange={e=>setDraft({ ...draft, status: e.target.value })}>
+                        <option value="">-</option>
+                        <option>idea</option>
+                        <option>doing</option>
+                        <option>done</option>
+                        <option>blocked</option>
+                      </select>
+                    </div>
+                    <div className="prop">
+                      <label>Priority</label>
+                      <select value={draft.priority} onChange={e=>setDraft({ ...draft, priority: e.target.value })}>
+                        <option value="">-</option>
+                        {[1,2,3,4,5].map(n=> <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div className="prop">
+                      <label>Due</label>
+                      <input type="date" value={draft.due_date} onChange={e=>setDraft({ ...draft, due_date: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="props-row">
+                    <div className="prop wide">
+                      <label>{isPaper ? 'Keywords (comma separated)' : 'Tags (comma separated)'}</label>
+                      <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder={isPaper ? 'keyword1, keyword2' : 'tag1, tag2'} />
+                    </div>
+                  </div>
+                  <CustomProps propsObj={draft.props} onChange={obj=>setDraft({ ...draft, props: obj })} />
+                </div>
+              </>
+              )}
             </div>
-            <Suggestions data={selected ? similar : null} onSelect={setSelectedId} />
+            {isPaper ? (
+              <Suggestions data={selected ? similar : null} onSelect={setSelectedId} />
+            ) : isIdea ? (
+              <SuggestionPlaceholder message="Ideas can later be used as solutions for papers. Save this idea and link it from a paper." />
+            ) : null}
           </div>
         </div>
       </div>
@@ -399,16 +692,32 @@ function SubjectManager({ subjects, onChange, onSelectSubject }) {
   return (
     <div className="subject-manager">
       <div className="sm-row">
-        <input className="sm-input" placeholder="Add subject (e.g., paper, note, idea)" value={name} onChange={e=>setName(e.target.value)} />
+        <input className="sm-input" placeholder="Add subject (e.g., paper, plain-note, idea)" value={name} onChange={e=>setName(e.target.value)} />
         <button className="btn" onClick={add}>Add</button>
       </div>
       <div className="chips">
-        {subjects.map(s => (
-          <div key={s.name} className="chip" onClick={()=>onSelectSubject(s.name)}>
-            <span>{s.name}</span>
-            <button className="chip-x" title="Delete" onClick={(e)=>{ e.stopPropagation(); remove(s.name); }}>×</button>
-          </div>
-        ))}
+        {subjects.map(s => {
+          const isBase = ['paper','plain-note','idea'].includes((s.name||'').toLowerCase());
+          return (
+            <div key={s.name} className="chip" onClick={()=>onSelectSubject(s.name)}>
+              <span>{s.name}</span>
+              {!isBase && (
+                <button className="chip-x" title="Delete" onClick={(e)=>{ e.stopPropagation(); remove(s.name); }}>×</button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function SuggestionPlaceholder({ message }) {
+  return (
+    <div className="suggestions">
+      <div className="sugg-section">
+        <h4>Suggestions</h4>
+        <div className="muted">{message}</div>
       </div>
     </div>
   )

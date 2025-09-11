@@ -1,0 +1,15 @@
+# Normalize all text files to LF in repo and checkout with LF on all platforms
+* text=auto eol=lf
+
+# Keep CRLF for Windows batch scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Mark common binary files (no line-ending conversions)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.db binary
