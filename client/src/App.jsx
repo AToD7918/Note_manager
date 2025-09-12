@@ -31,6 +31,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 }
 
 function Sidebar({ notes, selectedId, onSelect, onNew, query, onQueryChange, onSearch, sortBy, onSortBy, contentQuery, onContentQueryChange, contentResults }) {
+  const [collapsed, setCollapsed] = useState({})
   useEffect(() => {
     const q = (query || '').trim();
     if (!q) { onSearch([]); return; }
@@ -66,12 +67,55 @@ function Sidebar({ notes, selectedId, onSelect, onNew, query, onQueryChange, onS
         </select>
       </div>
       <div className="note-list">
-        {notes.map(n => (
-          <div key={n.id} className={`note-item ${selectedId===n.id? 'selected': ''}`} onClick={() => onSelect(n.id)}>
-            <div className="title">{n.title || 'Untitled'}{(n.hits != null || n.score != null) && <span className="muted"> · {(n.hits ?? n.score)}</span>}</div>
-            <div className="meta">{new Date(n.updated_at).toLocaleString()}</div>
-          </div>
-        ))}
+        {(() => {
+          if (sortBy !== 'subject') {
+            return notes.map(n => (
+              <div key={n.id} className={`note-item ${selectedId===n.id? 'selected': ''}`} onClick={() => onSelect(n.id)}>
+                <div className="title">{n.title || 'Untitled'}{(n.hits != null || n.score != null) && <span className="muted"> · {(n.hits ?? n.score)}</span>}</div>
+                <div className="meta">{new Date(n.updated_at).toLocaleString()}</div>
+              </div>
+            ))
+          } else {
+            // Group notes by subject
+            const groups = new Map()
+            for (const n of notes) {
+              const subj = (n.subject || '— No Subject —')
+              if (!groups.has(subj)) groups.set(subj, [])
+              groups.get(subj).push(n)
+            }
+            // Order: paper, idea first; then others alphabetically
+            const allSubjects = Array.from(groups.keys())
+            const baseOrder = ['paper','idea']
+            const sortedSubjects = allSubjects.sort((a,b) => {
+              const al = (a||'').toLowerCase(); const bl = (b||'').toLowerCase();
+              const ai = baseOrder.indexOf(al); const bi = baseOrder.indexOf(bl);
+              const abase = ai === -1 ? 999 : ai; const bbase = bi === -1 ? 999 : bi;
+              if (abase !== bbase) return abase - bbase;
+              return a.localeCompare(b);
+            })
+            const out = []
+            for (const subj of sortedSubjects) {
+              const isCollapsed = !!collapsed[subj]
+              out.push(
+                <div key={`hdr-${subj}`} className="sb-subject" onClick={()=>setCollapsed(prev=>({ ...prev, [subj]: !prev[subj] }))}>
+                  <span className="caret">{isCollapsed ? '▸' : '▾'}</span>
+                  <span>{subj}</span>
+                </div>
+              )
+              if (!isCollapsed) {
+                for (const n of groups.get(subj)) {
+                  out.push(
+                    <div key={n.id} className={`note-item ${selectedId===n.id? 'selected': ''}`} onClick={() => onSelect(n.id)}>
+                      <div className="title">{n.title || 'Untitled'}</div>
+                      <div className="meta">{new Date(n.updated_at).toLocaleString()}</div>
+                    </div>
+                  )
+                }
+              }
+            }
+            return out
+          }
+        })()}
       </div>
       <div className="sidebar-bottom">
         <div className="sb-header">Search All Notes</div>
@@ -126,7 +170,8 @@ function Suggestions({ data, onSelect }) {
     <div className="suggestions">
       <Section name="Similar Problems" items={data.problem_similar} />
       <Section name="Similar Solutions" items={data.solution_similar} />
-      <Section name="Solution → Problem (After)" items={data.solution_to_problem} />
+      <Section name="Similar Limits" items={data.limit_similar} />
+      <Section name="Limit → Solution (After)" items={data.solution_to_problem} />
       <Section name="Problem → Solution (Before)" items={data.problem_to_solution} />
     </div>
   )
@@ -152,9 +197,12 @@ export default function App() {
   const [contentResults, setContentResults] = useState([])
   const [view, setView] = useState('notes') // notes | subjects | sort | graph
   const [subjects, setSubjects] = useState([])
+  const [graphSubject, setGraphSubject] = useState('paper')
+  const [graphSelectedId, setGraphSelectedId] = useState(null)
   const [sortMode, setSortMode] = useState('subject') // subject | title | updated
 
   const selected = useMemo(() => notes.find(n=>n.id===selectedId) || null, [notes, selectedId])
+  const graphSelected = useMemo(() => notes.find(n=>n.id===graphSelectedId) || null, [notes, graphSelectedId])
   const [draft, setDraft] = useState({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', status: '', priority: '', due_date: '', tags: '', props: {} })
   const isNew = !selected
   const subjLc = (draft.subject || '').toLowerCase()
@@ -249,15 +297,16 @@ export default function App() {
           ? (draft.solution?.trim() || paperFallback)
           : (draft.solution || '')
     ).trim();
+    const l = (draft.limit || '').trim();
     if (!p && !s) { setSimilar(null); return }
     const handle = setTimeout(() => {
-      fetch('/api/similar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem: p || '', solution: s || '', excludeId: selectedId || undefined }) })
+      fetch('/api/similar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem: p || '', solution: s || '', limit: l || '', excludeId: selectedId || undefined }) })
         .then(r => r.json())
         .then(setSimilar)
         .catch(()=>{})
     }, 400)
     return () => clearTimeout(handle)
-  }, [draft.problem, draft.solution, draft.details, draft.props?.idea_pd_user, draft.props?.idea_pd_one, draft.props?.idea_pd_constraints, draft.props?.idea_hypothesis, draft.props?.idea_conclusion, draft.props?.idea_why, draft.props?.idea_summary, draft.props?.link, draft.title, isPlainNote, isIdea, isPaper, selectedId])
+  }, [draft.problem, draft.solution, draft.limit, draft.details, draft.props?.idea_pd_user, draft.props?.idea_pd_one, draft.props?.idea_pd_constraints, draft.props?.idea_hypothesis, draft.props?.idea_conclusion, draft.props?.idea_why, draft.props?.idea_summary, draft.props?.link, draft.title, isPlainNote, isIdea, isPaper, selectedId])
 
   // Content search (all fields)
   useEffect(() => {
@@ -788,7 +837,51 @@ export default function App() {
           </div>
         </div>
       </div>
-      <div className={`placeholder ${view==='graph' ? '' : 'hidden'}`}></div>
+      <div className={`graph-view ${view==='graph' ? '' : 'hidden'}`}>
+        <div className="graph-panel">
+          <div className="sm-row" style={{ marginBottom: 8 }}>
+            <label style={{ color:'var(--muted)', alignSelf:'center' }}>Subject</label>
+            <select className="sort-select" value={graphSubject} onChange={e=>{ setGraphSubject(e.target.value); setGraphSelectedId(null); }}>
+              {['paper', ...subjects.map(s=>s.name).filter(n=>n.toLowerCase()!=='paper')].map(n=> (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+          <div className="graph-row">
+            <div className="graph-left">
+              <GraphCanvas subject={graphSubject} notes={notes} onOpen={(id)=>{ setGraphSelectedId(id); }} />
+            </div>
+            <div className="graph-right">
+              {!graphSelected ? (
+                <div className="muted">Select a node to see details here.</div>
+              ) : (
+                <div>
+                  <div className="title">{graphSelected.title || 'Untitled'}</div>
+                  <div className="meta">{new Date(graphSelected.updated_at).toLocaleString()} · {graphSelected.subject || '-'}</div>
+                  {!!(graphSelected.problem||'').trim() && (
+                    <div className="section"><label className="muted">Problem</label><div>{graphSelected.problem}</div></div>
+                  )}
+                  {!!(graphSelected.solution||'').trim() && (
+                    <div className="section"><label className="muted">Solution</label><div>{graphSelected.solution}</div></div>
+                  )}
+                  {!!((graphSelected.props||{}).summary||'').trim && (
+                    <div className="section"><label className="muted">Summary</label><div>{(graphSelected.props||{}).summary}</div></div>
+                  )}
+                  {!!(graphSelected.limit||'').trim() && (
+                    <div className="section"><label className="muted">Limit</label><div>{graphSelected.limit}</div></div>
+                  )}
+                  {!!(graphSelected.details||'').trim() && (
+                    <div className="section"><label className="muted">Details</label><div>{graphSelected.details}</div></div>
+                  )}
+                  <div style={{ marginTop: 12 }}>
+                    <button className="btn" onClick={()=>{ setSelectedId(graphSelected.id); setView('notes'); }}>Open in Notes</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -910,18 +1003,29 @@ function SubjectManager({ subjects, notes, onChange }) {
         <button className="btn" onClick={addNew}>Add new subject</button>
       </div>
       <div className="chips" style={{ marginBottom: 12 }}>
-        {subjects.map(s => {
-          const isBase = ['paper','plain-note','idea'].includes((s.name||'').toLowerCase());
-          const hasNotes = (notes||[]).some(n=> (n.subject||'').toLowerCase() === (s.name||'').toLowerCase());
-          return (
+        {(() => {
+          const baseOrder = ['idea','paper','plain-note'];
+          const decorated = (subjects||[]).map(s => {
+            const lname = (s.name||'').toLowerCase();
+            const isBase = baseOrder.includes(lname);
+            const hasNotes = (notes||[]).some(n=> (n.subject||'').toLowerCase() === lname);
+            const baseIdx = isBase ? baseOrder.indexOf(lname) : Infinity;
+            return { s, lname, isBase, hasNotes, baseIdx };
+          });
+          const base = decorated.filter(d=>d.isBase).sort((a,b)=> a.baseIdx - b.baseIdx);
+          const others = decorated.filter(d=>!d.isBase);
+          const othersUn = others.filter(d=>d.hasNotes).sort((a,b)=> a.lname.localeCompare(b.lname));
+          const othersEr = others.filter(d=>!d.hasNotes).sort((a,b)=> a.lname.localeCompare(b.lname));
+          const finalOrder = [...base, ...othersUn, ...othersEr];
+          return finalOrder.map(({ s, isBase, hasNotes }) => (
             <div key={s.name} className="chip" onClick={()=>{ setMode('edit'); setSelected(s); setName(s.name); setFields(((s.schema&&Array.isArray(s.schema.fields))?s.schema.fields:[])); setShowBuilder(true); }}>
               <span>{s.name}</span>
               {!isBase && !hasNotes && (
                 <button className="chip-x" title="Delete" onClick={(e)=>{ e.stopPropagation(); remove(s.name); }}>×</button>
               )}
             </div>
-          )
-        })}
+          ));
+        })()}
       </div>
       {showBuilder && (<>
         <div className="builder">
@@ -1047,6 +1151,211 @@ function CustomProps({ propsObj, onChange }) {
         <input className="kv-val" placeholder="Value" value={newVal} onChange={e=>setNewVal(e.target.value)} />
         <button className="btn" onClick={addPair}>Add</button>
       </div>
+    </div>
+  )
+}
+
+function GraphCanvas({ subject='paper', notes, onOpen }) {
+  const [data, setData] = useState({ nodes: [], edges: [] })
+  const ref = React.useRef(null)
+  const [size, setSize] = useState({ w: 800, h: 480 })
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [scale, setScale] = useState(1)
+  const pan0 = React.useRef({ x: 0, y: 0 })
+  const dragStart = React.useRef({ x: 0, y: 0 })
+  const dragging = React.useRef(false)
+  const [nodePos, setNodePos] = useState({}) // id -> {x,y}
+  const draggingNodeId = React.useRef(null)
+  const nodeDragStart = React.useRef({ x:0, y:0 })
+  const nodeStartPos = React.useRef({ x:0, y:0 })
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    function update() {
+      const r = el.getBoundingClientRect()
+      setSize({ w: Math.max(300, Math.floor(r.width)), h: Math.max(300, Math.floor(r.height)) })
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const notesSig = (notes||[]).map(n=>`${n.id}:${n.updated_at}`).join('|')
+    fetch(`/api/graph?subject=${encodeURIComponent(subject)}&t=${encodeURIComponent(notesSig)}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setData(d || { nodes: [], edges: [] }) })
+      .catch(()=>{})
+    return () => { cancelled = true }
+  }, [subject, notes.length, (notes||[]).map(n=>n.updated_at).join('|')])
+
+  const { w, h } = size
+  const cx = Math.floor(w/2), cy = Math.floor(h/2)
+  const R = Math.floor(Math.min(w, h)/2) - 40
+  const N = data.nodes.length || 1
+  const positions = new Map()
+  data.nodes.forEach((n, i) => {
+    const cached = nodePos[n.id]
+    if (cached) {
+      positions.set(n.id, cached)
+    } else {
+      const ang = (2*Math.PI*i)/N
+      const x = cx + Math.cos(ang)*R
+      const y = cy + Math.sin(ang)*R
+      positions.set(n.id, { x, y })
+    }
+  })
+
+  // Initialize missing node positions when graph or size changes
+  useEffect(() => {
+    setNodePos(prev => {
+      let changed = false
+      const next = { ...prev }
+      data.nodes.forEach((n, i) => {
+        if (!next[n.id]) {
+          const ang = (2*Math.PI*i)/N
+          next[n.id] = { x: cx + Math.cos(ang)*R, y: cy + Math.sin(ang)*R }
+          changed = true
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [data.nodes, w, h])
+
+  // Recenter view on subject change or container resize
+  useEffect(() => {
+    if (!data.nodes.length) { setPan({ x: 0, y: 0 }); return }
+    let sumX = 0, sumY = 0, cnt = 0
+    data.nodes.forEach((n, i) => {
+      const p = nodePos[n.id] || { x: cx + Math.cos((2*Math.PI*i)/N)*R, y: cy + Math.sin((2*Math.PI*i)/N)*R }
+      sumX += p.x; sumY += p.y; cnt++
+    })
+    const center = cnt ? { x: sumX / cnt, y: sumY / cnt } : { x: cx, y: cy }
+    const desired = { x: cx - center.x, y: cy - center.y }
+    setPan(clampPan(desired))
+  }, [subject, w, h, data.nodes.length])
+
+  // clamp pan so that the center of the node cluster stays within a safe viewport box
+  function clampPan(next) {
+    if (data.nodes.length === 0) return { x: 0, y: 0 }
+    let sumX = 0, sumY = 0, cnt = 0
+    positions.forEach(p => { sumX += p.x; sumY += p.y; cnt++ })
+    const center = cnt ? { x: sumX / cnt, y: sumY / cnt } : { x: cx, y: cy }
+    const margin = 100
+    const minPanX = margin - center.x
+    const maxPanX = (w - margin) - center.x
+    const minPanY = margin - center.y
+    const maxPanY = (h - margin) - center.y
+    return {
+      x: Math.max(Math.min(next.x, maxPanX), minPanX),
+      y: Math.max(Math.min(next.y, maxPanY), minPanY)
+    }
+  }
+
+  function onMouseDown(e) {
+    if (draggingNodeId.current) return
+    dragging.current = true
+    dragStart.current = { x: e.clientX, y: e.clientY }
+    pan0.current = { ...pan }
+    // attach listeners on window to handle outside drag
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+  function onMouseMove(e) {
+    if (!dragging.current) return
+    const dx = e.clientX - dragStart.current.x
+    const dy = e.clientY - dragStart.current.y
+    setPan(prev => clampPan({ x: pan0.current.x + dx, y: pan0.current.y + dy }))
+  }
+  function onMouseUp() {
+    dragging.current = false
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('mouseup', onMouseUp)
+  }
+  function onWheel(e) {
+    e.preventDefault()
+    const rect = ref.current?.getBoundingClientRect()
+    const cxp = rect ? (e.clientX - rect.left) : w/2
+    const cyp = rect ? (e.clientY - rect.top) : h/2
+    const s0 = scale
+    const zoomFactor = Math.exp(-(e.deltaY || 0) * 0.001)
+    let s1 = s0 * zoomFactor
+    s1 = Math.max(0.5, Math.min(3, s1))
+    if (s1 === s0) return
+    // keep cursor point stable
+    const panX = pan.x + (cxp * (1 - s1 / s0)) / s1
+    const panY = pan.y + (cyp * (1 - s1 / s0)) / s1
+    setScale(s1)
+    setPan(prev => clampPan({ x: panX, y: panY }))
+  }
+
+  function onNodeDown(id, e) {
+    e.stopPropagation()
+    e.preventDefault()
+    draggingNodeId.current = id
+    nodeDragStart.current = { x: e.clientX, y: e.clientY }
+    const p = positions.get(id) || { x: 0, y: 0 }
+    nodeStartPos.current = { ...p }
+    window.addEventListener('mousemove', onNodeMove)
+    window.addEventListener('mouseup', onNodeUp)
+  }
+  function onNodeMove(e) {
+    if (!draggingNodeId.current) return
+    const dx = e.clientX - nodeDragStart.current.x
+    const dy = e.clientY - nodeDragStart.current.y
+    const id = draggingNodeId.current
+    const nx = nodeStartPos.current.x + dx
+    const ny = nodeStartPos.current.y + dy
+    setNodePos(prev => ({ ...prev, [id]: { x: nx, y: ny } }))
+  }
+  function onNodeUp(e) {
+    const id = draggingNodeId.current
+    // treat as click if not moved much
+    if (id) {
+      const dx = (e?.clientX ?? nodeDragStart.current.x) - nodeDragStart.current.x
+      const dy = (e?.clientY ?? nodeDragStart.current.y) - nodeDragStart.current.y
+      if (Math.hypot(dx, dy) < 4) {
+        try { onOpen(id) } catch {}
+      }
+    }
+    draggingNodeId.current = null
+    window.removeEventListener('mousemove', onNodeMove)
+    window.removeEventListener('mouseup', onNodeUp)
+  }
+
+  return (
+    <div ref={ref} className="graph-canvas" onMouseDown={onMouseDown} onWheel={onWheel}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} style={{ userSelect:'none', cursor: dragging.current ? 'grabbing' : 'grab' }}>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+          </marker>
+        </defs>
+        <g transform={`translate(${pan.x},${pan.y}) scale(${scale})`}>
+          {/* edges */}
+          {data.edges.map((e, idx) => {
+            const s = positions.get(e.source) || { x: cx, y: cy }
+            const t = positions.get(e.target) || { x: cx, y: cy }
+            const stroke = e.type === 'sol->prob' ? '#22c55e' : '#60a5fa'
+            return (
+              <line key={idx} x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke={stroke} strokeWidth={1.5} markerEnd="url(#arrow)" opacity={0.7} />
+            )
+          })}
+          {/* nodes */}
+          {data.nodes.map((n, idx) => {
+            const p = positions.get(n.id) || { x: cx, y: cy }
+            return (
+              <g key={n.id} transform={`translate(${p.x},${p.y})`} style={{ cursor: draggingNodeId.current===n.id ? 'grabbing' : 'pointer' }} onMouseDown={(e)=>onNodeDown(n.id, e)}>
+                <circle r="6" fill="#e2e8f0" stroke="#334155" strokeWidth="1" />
+                <text x="8" y="4" fontSize="11" fill="#cbd5e1">{n.title}</text>
+              </g>
+            )
+          })}
+        </g>
+      </svg>
     </div>
   )
 }

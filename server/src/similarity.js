@@ -23,6 +23,7 @@ function indexNotes(notes) {
       title: n.title,
       problemSet: toSet(tokenize(n.problem || '')),
       solutionSet: toSet(tokenize(n.solution || '')),
+      limitSet: toSet(tokenize(n.limit || n.limit_text || '')),
     });
   }
   return idx;
@@ -45,13 +46,18 @@ export function suggestForNoteId(notes, id, limit = 5) {
     title: o.title,
     probProb: overlapCount(cur.problemSet, o.problemSet),
     solSol: overlapCount(cur.solutionSet, o.solutionSet),
-    solToProb: overlapCount(cur.solutionSet, o.problemSet),
-    probToSol: overlapCount(cur.problemSet, o.solutionSet),
+    limitLim: overlapCount(cur.limitSet, o.limitSet),
+    // Changed relations per spec
+    // After: Limit -> Solution (compute using current limit vs other's problem)
+    solToProb: overlapCount(cur.limitSet, o.problemSet),
+    // Before: Problem -> Solution (compute using current problem vs other's limit)
+    probToSol: overlapCount(cur.problemSet, o.limitSet),
   }));
 
   return {
     problem_similar: topOverlap(scored, 'probProb', limit),
     solution_similar: topOverlap(scored, 'solSol', limit),
+    limit_similar: topOverlap(scored, 'limitLim', limit),
     solution_to_problem: topOverlap(scored, 'solToProb', limit),
     problem_to_solution: topOverlap(scored, 'probToSol', limit),
   };
@@ -61,6 +67,7 @@ export function suggestForDraft(notes, draft, limit = 5, excludeId = undefined) 
   const idx = indexNotes(notes);
   const curProblem = toSet(tokenize(draft.problem || ''));
   const curSolution = toSet(tokenize(draft.solution || ''));
+  const curLimit = toSet(tokenize(draft.limit || draft.limit_text || ''));
   const others = Array.from(idx.values()).filter((o) => !excludeId || o.id !== excludeId);
 
   const scored = others.map((o) => ({
@@ -68,13 +75,17 @@ export function suggestForDraft(notes, draft, limit = 5, excludeId = undefined) 
     title: o.title,
     probProb: overlapCount(curProblem, o.problemSet),
     solSol: overlapCount(curSolution, o.solutionSet),
-    solToProb: overlapCount(curSolution, o.problemSet),
-    probToSol: overlapCount(curProblem, o.solutionSet),
+    limitLim: overlapCount(curLimit, o.limitSet),
+    // After: Limit -> Solution (compute using current limit vs other's problem)
+    solToProb: overlapCount(curLimit, o.problemSet),
+    // Before: Problem -> Solution (compute using current problem vs other's limit)
+    probToSol: overlapCount(curProblem, o.limitSet),
   }));
 
   return {
     problem_similar: topOverlap(scored, 'probProb', limit),
     solution_similar: topOverlap(scored, 'solSol', limit),
+    limit_similar: topOverlap(scored, 'limitLim', limit),
     solution_to_problem: topOverlap(scored, 'solToProb', limit),
     problem_to_solution: topOverlap(scored, 'probToSol', limit),
   };

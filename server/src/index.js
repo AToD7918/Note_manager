@@ -36,6 +36,7 @@ const BASE_SUBJECT_SCHEMAS = {
       { title: 'Problem', type: 'textarea', key: 'problem' },
       { title: 'Solution', type: 'textarea', key: 'solution' },
       { title: 'Limits', type: 'textarea', key: 'limit' },
+      { title: 'Summary', type: 'textarea', key: 'summary' },
       { title: 'Details', type: 'textarea', key: 'details' },
       { title: 'Keywords', type: 'tags', key: 'keywords' }
     ]
@@ -124,6 +125,35 @@ try {
     if (!hasSchema) upd.run(JSON.stringify(baseSchema), name);
     writeSubjectFile(name, row?.created_at || now, baseSchema);
   }
+  // Ensure paper schema has Summary between Limits and Details
+  try {
+    const row = sel.get('paper');
+    if (row) {
+      let schema = {};
+      try { schema = JSON.parse(row.schema_json || '{}') || {}; } catch {}
+      const fields = Array.isArray(schema.fields) ? [...schema.fields] : [];
+      const hasSummary = fields.some(f => (f.key||'').toLowerCase() === 'summary' || (f.title||'').toLowerCase() === 'summary');
+      if (!hasSummary) {
+        const summaryField = { title: 'Summary', type: 'textarea', key: 'summary' };
+        let inserted = false;
+        const idxLimit = fields.findIndex(f => ((f.key||f.title||'').toLowerCase().replace(/\s+/g,'') === 'limit' || (f.title||'').toLowerCase().includes('limit')));
+        const idxDetails = fields.findIndex(f => ((f.key||f.title||'').toLowerCase().replace(/\s+/g,'') === 'details' || (f.title||'').toLowerCase().includes('details')));
+        if (idxDetails !== -1) {
+          const insertAt = idxDetails;
+          fields.splice(insertAt, 0, summaryField);
+          inserted = true;
+        }
+        if (!inserted && idxLimit !== -1) {
+          fields.splice(idxLimit + 1, 0, summaryField);
+          inserted = true;
+        }
+        if (!inserted) fields.push(summaryField);
+        const nextSchema = { ...schema, fields };
+        upd.run(JSON.stringify(nextSchema), 'paper');
+        writeSubjectFile('paper', row.created_at || now, nextSchema);
+      }
+    }
+  } catch {}
 } catch (e) {
   console.error('Seeding subjects failed:', e);
 }
@@ -262,9 +292,9 @@ app.get('/api/notes/:id/similar', (req, res) => {
 
 // Preview similarity for unsaved drafts
 app.post('/api/similar', (req, res) => {
-  const { problem = '', solution = '', excludeId } = req.body || {};
+  const { problem = '', solution = '', limit = '', excludeId } = req.body || {};
   const notes = db.prepare('SELECT * FROM notes').all();
-  const out = suggestForDraft(notes, { problem, solution }, 5, excludeId);
+  const out = suggestForDraft(notes, { problem, solution, limit }, 5, excludeId);
   res.json(out);
 });
 
@@ -287,6 +317,36 @@ app.get('/api/search', (req, res) => {
   const notes = db.prepare('SELECT * FROM notes').all().map(fromRow);
   const results = searchNotes(notes, q, 50);
   res.json({ query: q, results });
+});
+
+// Graph endpoint (subject-scoped)
+app.get('/api/graph', (req, res) => {
+  try {
+    const subject = (req.query.subject || '').toString().trim().toLowerCase();
+    const rows = db.prepare('SELECT * FROM notes').all();
+    let notes = rows.map(fromRow);
+    if (subject) notes = notes.filter(n => (n.subject || '').toLowerCase() === subject);
+    // Build nodes
+    const nodes = notes.map(n => ({ id: n.id, title: n.title || 'Untitled' }));
+    // Build directed edges using existing suggestion logic
+    const idSet = new Set(notes.map(n => n.id));
+    const edgesMap = new Map();
+    function addEdge(src, dst, type, weight) {
+      if (!idSet.has(src) || !idSet.has(dst)) return;
+      const key = `${src}|${dst}|${type}`;
+      const prev = edgesMap.get(key);
+      if (!prev || (weight || 0) > (prev.weight || 0)) edgesMap.set(key, { source: src, target: dst, type, weight: weight || 1 });
+    }
+    for (const n of notes) {
+      const sugg = suggestForNoteId(notes, n.id, 5) || { solution_to_problem: [], problem_to_solution: [] };
+      // Only show the updated 'after' connection (Limit -> Solution per spec)
+      for (const e of (sugg.solution_to_problem || [])) addEdge(n.id, e.id, 'limit->after', e.score);
+    }
+    const edges = Array.from(edgesMap.values());
+    res.json({ subject: subject || null, nodes, edges });
+  } catch (e) {
+    res.status(500).json({ error: 'graph_failed' });
+  }
 });
 
 // Subjects API

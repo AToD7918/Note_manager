@@ -2,17 +2,19 @@
 
 ## Problem
 
-banana
+1
 
 ## Solution
 
-cranberry
+3
 
 ## Limit
 
-hello 2
+2
 
 
 ## Metadata
 
 - Subject: paper
+- link: https://www.youtube.com/watch?v=JmZC9-IZOE033
+- summary: ㄹㄹㄹ

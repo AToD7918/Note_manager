@@ -24,6 +24,11 @@
         "key": "limit"
       },
       {
+        "title": "Summary",
+        "type": "textarea",
+        "key": "summary"
+      },
+      {
         "title": "Details",
         "type": "textarea",
         "key": "details"
