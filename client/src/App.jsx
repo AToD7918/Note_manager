@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import cytoscape from 'cytoscape'
 
   const api = {
   async list() {
@@ -491,7 +492,7 @@ export default function App() {
         <button className={`tab ${view==='notes' ? 'active' : ''}`} onClick={()=>setView('notes')}>Notes</button>
         <button className={`tab ${view==='subjects' ? 'active' : ''}`} onClick={()=>setView('subjects')}>Subjects</button>
         <button className={`tab ${view==='sort' ? 'active' : ''}`} onClick={()=>setView('sort')}>Sort</button>
-        <button className={`tab ${view==='graph' ? 'active' : ''}`} onClick={()=>setView('graph')}>Graph</button>
+        <button className={`tab ${view==='graph' ? 'active' : ''}`} onClick={()=>{ setGraphSubject('paper'); setGraphSelectedId(null); setView('graph'); }}>Graph</button>
       </div>
       <div className={`content-row ${view==='notes' ? '' : 'hidden'}`}>
       <Sidebar
@@ -842,14 +843,20 @@ export default function App() {
           <div className="sm-row" style={{ marginBottom: 8 }}>
             <label style={{ color:'var(--muted)', alignSelf:'center' }}>Subject</label>
             <select className="sort-select" value={graphSubject} onChange={e=>{ setGraphSubject(e.target.value); setGraphSelectedId(null); }}>
-              {['paper', ...subjects.map(s=>s.name).filter(n=>n.toLowerCase()!=='paper')].map(n=> (
-                <option key={n} value={n}>{n}</option>
-              ))}
+              {(() => {
+                const base = ['paper','idea']
+                const rest = subjects.map(s=>s.name).filter(n => !base.includes((n||'').toLowerCase()))
+                const ordered = [...base, ...rest]
+                const seen = new Set()
+                return ordered.filter(n=>{ const k=(n||'').toString(); if(seen.has(k.toLowerCase())) return false; seen.add(k.toLowerCase()); return true; }).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))
+              })()}
             </select>
           </div>
           <div className="graph-row">
             <div className="graph-left">
-              <GraphCanvas subject={graphSubject} notes={notes} onOpen={(id)=>{ setGraphSelectedId(id); }} />
+              <GraphCanvas key={graphSubject} subject={graphSubject} notes={notes} onOpen={(id)=>{ setGraphSelectedId(id); }} visible={view==='graph'} />
             </div>
             <div className="graph-right">
               {!graphSelected ? (
@@ -864,7 +871,7 @@ export default function App() {
                   {!!(graphSelected.solution||'').trim() && (
                     <div className="section"><label className="muted">Solution</label><div>{graphSelected.solution}</div></div>
                   )}
-                  {!!((graphSelected.props||{}).summary||'').trim && (
+                  {!!(((graphSelected.props||{}).summary || '').trim()) && (
                     <div className="section"><label className="muted">Summary</label><div>{(graphSelected.props||{}).summary}</div></div>
                   )}
                   {!!(graphSelected.limit||'').trim() && (
@@ -1155,207 +1162,253 @@ function CustomProps({ propsObj, onChange }) {
   )
 }
 
-function GraphCanvas({ subject='paper', notes, onOpen }) {
+function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
+  const containerRef = React.useRef(null)
+  const cyRef = React.useRef(null)
+  const hasLaidOutRef = React.useRef(false)
+  const saveTimerRef = React.useRef(null)
+  const onOpenRef = React.useRef(onOpen)
   const [data, setData] = useState({ nodes: [], edges: [] })
-  const ref = React.useRef(null)
-  const [size, setSize] = useState({ w: 800, h: 480 })
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [scale, setScale] = useState(1)
-  const pan0 = React.useRef({ x: 0, y: 0 })
-  const dragStart = React.useRef({ x: 0, y: 0 })
-  const dragging = React.useRef(false)
-  const [nodePos, setNodePos] = useState({}) // id -> {x,y}
-  const draggingNodeId = React.useRef(null)
-  const nodeDragStart = React.useRef({ x:0, y:0 })
-  const nodeStartPos = React.useRef({ x:0, y:0 })
 
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    function update() {
-      const r = el.getBoundingClientRect()
-      setSize({ w: Math.max(300, Math.floor(r.width)), h: Math.max(300, Math.floor(r.height)) })
-    }
-    update()
-    const ro = new ResizeObserver(update)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+  // Helpers for persisting positions per subject
+  const subjKey = React.useMemo(() => `graphPositions:${(subject||'').toString().toLowerCase()}`,[subject])
+  const loadPositions = React.useCallback(() => {
+    try { const raw = localStorage.getItem(subjKey); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+  }, [subjKey])
+  const savePositions = React.useCallback(() => {
+    const cy = cyRef.current; if (!cy) return;
+    try {
+      const obj = {};
+      cy.nodes().forEach(n => { const p = n.position(); obj[n.id()] = { x: p.x, y: p.y }; });
+      localStorage.setItem(subjKey, JSON.stringify(obj));
+    } catch {}
+  }, [subjKey])
+  const scheduleSavePositions = React.useCallback(() => {
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    saveTimerRef.current = setTimeout(() => { savePositions(); }, 400);
+  }, [savePositions])
 
+  // Keep latest onOpen without retriggering cy init
+  useEffect(() => { onOpenRef.current = onOpen }, [onOpen])
+
+  // Fetch graph data based on subject + notes signature
   useEffect(() => {
     let cancelled = false
-    const notesSig = (notes||[]).map(n=>`${n.id}:${n.updated_at}`).join('|')
+    const notesSig = (notes || []).map(n => `${n.id}:${n.updated_at}`).join('|')
     fetch(`/api/graph?subject=${encodeURIComponent(subject)}&t=${encodeURIComponent(notesSig)}`)
       .then(r => r.json())
       .then(d => { if (!cancelled) setData(d || { nodes: [], edges: [] }) })
-      .catch(()=>{})
+      .catch(() => {})
     return () => { cancelled = true }
-  }, [subject, notes.length, (notes||[]).map(n=>n.updated_at).join('|')])
+  }, [subject, notes.length, (notes || []).map(n => n.updated_at).join('|')])
 
-  const { w, h } = size
-  const cx = Math.floor(w/2), cy = Math.floor(h/2)
-  const R = Math.floor(Math.min(w, h)/2) - 40
-  const N = data.nodes.length || 1
-  const positions = new Map()
-  data.nodes.forEach((n, i) => {
-    const cached = nodePos[n.id]
-    if (cached) {
-      positions.set(n.id, cached)
-    } else {
-      const ang = (2*Math.PI*i)/N
-      const x = cx + Math.cos(ang)*R
-      const y = cy + Math.sin(ang)*R
-      positions.set(n.id, { x, y })
-    }
-  })
-
-  // Initialize missing node positions when graph or size changes
+  // Initialize Cytoscape when visible
   useEffect(() => {
-    setNodePos(prev => {
-      let changed = false
-      const next = { ...prev }
-      data.nodes.forEach((n, i) => {
-        if (!next[n.id]) {
-          const ang = (2*Math.PI*i)/N
-          next[n.id] = { x: cx + Math.cos(ang)*R, y: cy + Math.sin(ang)*R }
-          changed = true
+    if (!visible) return
+    if (!containerRef.current || cyRef.current) return
+    const container = containerRef.current
+
+    const cy = cytoscape({
+      container,
+      elements: [],
+      style: [
+        {
+          selector: 'node',
+          style: {
+            'background-color': '#0ea5e9',
+            'label': 'data(label)',
+            'color': '#cbd5e1',
+            'font-size': 8,
+            'width': 20,
+            'height': 20,
+            'text-outline-width': 0,
+            'text-wrap': 'wrap',
+            'text-max-width': '90px'
+          }
+        },
+        {
+          selector: 'edge',
+          style: {
+            'width': 1,
+            'line-color': '#64748b',
+            'target-arrow-color': '#64748b',
+            'target-arrow-shape': 'triangle',
+            'arrow-scale': 0.7,
+            'curve-style': 'bezier'
+          }
+        },
+        {
+          selector: 'node:selected',
+          style: {
+            'background-color': '#22c55e'
+          }
+        },
+        {
+          selector: 'edge:selected',
+          style: {
+            'line-color': '#22c55e',
+            'target-arrow-color': '#22c55e'
+          }
         }
-      })
-      return changed ? next : prev
+      ],
+  layout: { name: 'cose' },
+  wheelSensitivity: 0.2
     })
-  }, [data.nodes, w, h])
+    cyRef.current = cy
 
-  // Recenter view on subject change or container resize
-  useEffect(() => {
-    if (!data.nodes.length) { setPan({ x: 0, y: 0 }); return }
-    let sumX = 0, sumY = 0, cnt = 0
-    data.nodes.forEach((n, i) => {
-      const p = nodePos[n.id] || { x: cx + Math.cos((2*Math.PI*i)/N)*R, y: cy + Math.sin((2*Math.PI*i)/N)*R }
-      sumX += p.x; sumY += p.y; cnt++
-    })
-    const center = cnt ? { x: sumX / cnt, y: sumY / cnt } : { x: cx, y: cy }
-    const desired = { x: cx - center.x, y: cy - center.y }
-    setPan(clampPan(desired))
-  }, [subject, w, h, data.nodes.length])
-
-  // clamp pan so that the center of the node cluster stays within a safe viewport box
-  function clampPan(next) {
-    if (data.nodes.length === 0) return { x: 0, y: 0 }
-    let sumX = 0, sumY = 0, cnt = 0
-    positions.forEach(p => { sumX += p.x; sumY += p.y; cnt++ })
-    const center = cnt ? { x: sumX / cnt, y: sumY / cnt } : { x: cx, y: cy }
-    const margin = 100
-    const minPanX = margin - center.x
-    const maxPanX = (w - margin) - center.x
-    const minPanY = margin - center.y
-    const maxPanY = (h - margin) - center.y
-    return {
-      x: Math.max(Math.min(next.x, maxPanX), minPanX),
-      y: Math.max(Math.min(next.y, maxPanY), minPanY)
-    }
-  }
-
-  function onMouseDown(e) {
-    if (draggingNodeId.current) return
-    dragging.current = true
-    dragStart.current = { x: e.clientX, y: e.clientY }
-    pan0.current = { ...pan }
-    // attach listeners on window to handle outside drag
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
-  }
-  function onMouseMove(e) {
-    if (!dragging.current) return
-    const dx = e.clientX - dragStart.current.x
-    const dy = e.clientY - dragStart.current.y
-    setPan(prev => clampPan({ x: pan0.current.x + dx, y: pan0.current.y + dy }))
-  }
-  function onMouseUp() {
-    dragging.current = false
-    window.removeEventListener('mousemove', onMouseMove)
-    window.removeEventListener('mouseup', onMouseUp)
-  }
-  function onWheel(e) {
-    e.preventDefault()
-    const rect = ref.current?.getBoundingClientRect()
-    const cxp = rect ? (e.clientX - rect.left) : w/2
-    const cyp = rect ? (e.clientY - rect.top) : h/2
-    const s0 = scale
-    const zoomFactor = Math.exp(-(e.deltaY || 0) * 0.001)
-    let s1 = s0 * zoomFactor
-    s1 = Math.max(0.5, Math.min(3, s1))
-    if (s1 === s0) return
-    // keep cursor point stable
-    const panX = pan.x + (cxp * (1 - s1 / s0)) / s1
-    const panY = pan.y + (cyp * (1 - s1 / s0)) / s1
-    setScale(s1)
-    setPan(prev => clampPan({ x: panX, y: panY }))
-  }
-
-  function onNodeDown(id, e) {
-    e.stopPropagation()
-    e.preventDefault()
-    draggingNodeId.current = id
-    nodeDragStart.current = { x: e.clientX, y: e.clientY }
-    const p = positions.get(id) || { x: 0, y: 0 }
-    nodeStartPos.current = { ...p }
-    window.addEventListener('mousemove', onNodeMove)
-    window.addEventListener('mouseup', onNodeUp)
-  }
-  function onNodeMove(e) {
-    if (!draggingNodeId.current) return
-    const dx = e.clientX - nodeDragStart.current.x
-    const dy = e.clientY - nodeDragStart.current.y
-    const id = draggingNodeId.current
-    const nx = nodeStartPos.current.x + dx
-    const ny = nodeStartPos.current.y + dy
-    setNodePos(prev => ({ ...prev, [id]: { x: nx, y: ny } }))
-  }
-  function onNodeUp(e) {
-    const id = draggingNodeId.current
-    // treat as click if not moved much
-    if (id) {
-      const dx = (e?.clientX ?? nodeDragStart.current.x) - nodeDragStart.current.x
-      const dy = (e?.clientY ?? nodeDragStart.current.y) - nodeDragStart.current.y
-      if (Math.hypot(dx, dy) < 4) {
-        try { onOpen(id) } catch {}
+    // Initial draw with current data (handles case where data arrived before cy init)
+    try {
+      const elements = []
+      for (const n of (data.nodes || [])) {
+        const id = `${n.id}`
+        elements.push({ data: { id, label: n.title || 'Untitled', idRaw: n.id } })
       }
+      let edgeCount = 0
+      for (const e of (data.edges || [])) {
+        const sid = `${e.source}`
+        const tid = `${e.target}`
+        const eid = `e${edgeCount++}-${sid}->${tid}`
+        elements.push({ data: { id: eid, source: sid, target: tid } })
+      }
+      if (elements.length) {
+        const saved = loadPositions();
+        // Add nodes first with positions if saved
+        const nodeEles = elements.filter(el => !el.data.source).map(el => el)
+        const edgeEles = elements.filter(el => !!el.data.source)
+        const addedNodes = cy.add(nodeEles)
+        addedNodes.forEach(n => {
+          const sp = saved[n.id()]
+          if (sp && typeof sp.x === 'number' && typeof sp.y === 'number') {
+            try { n.position({ x: sp.x, y: sp.y }); } catch {}
+          }
+        })
+        cy.add(edgeEles)
+        if (Object.keys(saved).length === 0) {
+          const layout = cy.layout({ name: 'cose', animate: false })
+          cy.once('layoutstop', () => { hasLaidOutRef.current = true; try { cy.fit(undefined, 15) } catch {}; savePositions(); })
+          layout.run()
+        } else {
+          hasLaidOutRef.current = true
+          try { cy.fit(undefined, 15) } catch {}
+        }
+      }
+    } catch {}
+
+    // Click handler -> select node immediately and open details panel
+    cy.on('tap', 'node', evt => {
+      const node = evt.target
+      try { node.select() } catch {}
+      const raw = node.data('idRaw')
+      const id = raw != null ? raw : node.id()
+      if (id != null) {
+        try { onOpenRef.current && onOpenRef.current(id) } catch {}
+      }
+    })
+
+    // Save positions when user moves nodes
+    cy.on('dragfree', 'node', () => { scheduleSavePositions() })
+    cy.on('position', 'node', () => { scheduleSavePositions() })
+
+    // Handle container resize
+    const ro = new ResizeObserver(() => {
+      // Only resize; do not fit on every resize to avoid viewport jumping
+      try { cy.resize() } catch {}
+    })
+    ro.observe(container)
+
+    return () => {
+      try { ro.disconnect() } catch {}
+    if (saveTimerRef.current) { try { clearTimeout(saveTimerRef.current) } catch {}; saveTimerRef.current = null }
+      try { cy.destroy() } catch {}
+      cyRef.current = null
     }
-    draggingNodeId.current = null
-    window.removeEventListener('mousemove', onNodeMove)
-    window.removeEventListener('mouseup', onNodeUp)
-  }
+  }, [visible, loadPositions, savePositions, scheduleSavePositions])
+
+  // Update data in Cytoscape when data changes
+  useEffect(() => {
+    const cy = cyRef.current
+    if (!cy) return
+    try {
+      // Build new node/edge sets
+      const newNodes = (data.nodes || []).map(n => ({ id: `${n.id}`, label: n.title || 'Untitled', idRaw: n.id }))
+      const newNodeIds = new Set(newNodes.map(n => n.id))
+      const newEdges = (data.edges || []).map((e, i) => ({ id: `e${i}-${e.source}->${e.target}`, source: `${e.source}`, target: `${e.target}` }))
+
+      const saved = loadPositions();
+
+      if (!hasLaidOutRef.current) {
+        // First paint for this subject: use saved positions if any; otherwise layout once then save
+        cy.elements().remove()
+        const nodeEles = newNodes.map(n => ({ data: n }))
+        const addedNodes = cy.add(nodeEles)
+        addedNodes.forEach(n => {
+          const sp = saved[n.id()]
+          if (sp && typeof sp.x === 'number' && typeof sp.y === 'number') {
+            try { n.position({ x: sp.x, y: sp.y }); } catch {}
+          }
+        })
+        cy.add(newEdges.map(e => ({ data: e })))
+        if (Object.keys(saved).length === 0 && newNodes.length > 0) {
+          const layout = cy.layout({ name: 'cose', animate: false })
+          cy.once('layoutstop', () => { hasLaidOutRef.current = true; try { cy.fit(undefined, 15) } catch {}; savePositions(); })
+          layout.run()
+        } else {
+          hasLaidOutRef.current = true
+          try { cy.fit(undefined, 15) } catch {}
+        }
+        return
+      }
+
+      // Subsequent updates: preserve node positions; do not run layout
+      // 1) Update or add nodes
+      const cyNodes = cy.nodes()
+      // Remove nodes that no longer exist
+      cyNodes.filter(n => !newNodeIds.has(n.id())).remove()
+      // Update existing and add new
+      for (const n of newNodes) {
+        const ele = cy.getElementById(n.id)
+        if (ele && ele.nonempty()) {
+          ele.data({ label: n.label, idRaw: n.idRaw })
+        } else {
+          const center = { x: cy.width() / 2, y: cy.height() / 2 }
+          const added = cy.add({ data: n, position: center })
+          const sp = saved[n.id]
+          if (sp && typeof sp.x === 'number' && typeof sp.y === 'number') {
+            try { added.position({ x: sp.x, y: sp.y }) } catch {}
+          }
+        }
+      }
+      // 2) Replace edges (edges don't affect node positions)
+      cy.edges().remove()
+      cy.add(newEdges.map(e => ({ data: e })))
+      // 3) Keep current viewport; do not rerun layout
+    } catch {}
+  }, [data, loadPositions, savePositions])
+
+  // When becoming visible, force a resize/fit to avoid blank canvas
+  useEffect(() => {
+    if (!visible) return
+    const cy = cyRef.current
+    if (!cy) return
+    try {
+      cy.resize()
+      cy.fit(undefined, 12)
+    } catch {}
+  }, [visible])
+
+  // Also ensure fit when subject changes (user selects another subject)
+  useEffect(() => {
+    const cy = cyRef.current
+    if (!cy) return
+  // Reset first-layout flag when subject changes
+  hasLaidOutRef.current = false
+    try {
+      cy.resize()
+      cy.fit(undefined, 12)
+    } catch {}
+  }, [subject])
 
   return (
-    <div ref={ref} className="graph-canvas" onMouseDown={onMouseDown} onWheel={onWheel}>
-      <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} style={{ userSelect:'none', cursor: dragging.current ? 'grabbing' : 'grab' }}>
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
-          </marker>
-        </defs>
-        <g transform={`translate(${pan.x},${pan.y}) scale(${scale})`}>
-          {/* edges */}
-          {data.edges.map((e, idx) => {
-            const s = positions.get(e.source) || { x: cx, y: cy }
-            const t = positions.get(e.target) || { x: cx, y: cy }
-            const stroke = e.type === 'sol->prob' ? '#22c55e' : '#60a5fa'
-            return (
-              <line key={idx} x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke={stroke} strokeWidth={1.5} markerEnd="url(#arrow)" opacity={0.7} />
-            )
-          })}
-          {/* nodes */}
-          {data.nodes.map((n, idx) => {
-            const p = positions.get(n.id) || { x: cx, y: cy }
-            return (
-              <g key={n.id} transform={`translate(${p.x},${p.y})`} style={{ cursor: draggingNodeId.current===n.id ? 'grabbing' : 'pointer' }} onMouseDown={(e)=>onNodeDown(n.id, e)}>
-                <circle r="6" fill="#e2e8f0" stroke="#334155" strokeWidth="1" />
-                <text x="8" y="4" fontSize="11" fill="#cbd5e1">{n.title}</text>
-              </g>
-            )
-          })}
-        </g>
-      </svg>
-    </div>
+    <div ref={containerRef} className="graph-canvas" />
   )
 }

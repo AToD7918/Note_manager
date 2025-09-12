@@ -1,24 +1,25 @@
-# paper 4
+# paper 6
 
 ## Problem
 
-3, 4
+6, 2
 
 ## Solution
 
-5
+7
 
 ## Limit
 
-5'
+7'
 
 
 ## Metadata
 
 - Subject: paper
-- link: sdf
+- link: www
 - problem: 
 - solution: 
 - limit: 
+- summary: 
 - details: 
 - keywords: 
