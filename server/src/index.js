@@ -322,7 +322,8 @@ app.get('/api/search', (req, res) => {
 // Graph endpoint (subject-scoped)
 app.get('/api/graph', (req, res) => {
   try {
-    const subject = (req.query.subject || '').toString().trim().toLowerCase();
+    const subjectRaw = (req.query.subject || '').toString().trim();
+    const subject = subjectRaw.toLowerCase();
     const rows = db.prepare('SELECT * FROM notes').all();
     let notes = rows.map(fromRow);
     if (subject) notes = notes.filter(n => (n.subject || '').toLowerCase() === subject);
@@ -337,10 +338,44 @@ app.get('/api/graph', (req, res) => {
       const prev = edgesMap.get(key);
       if (!prev || (weight || 0) > (prev.weight || 0)) edgesMap.set(key, { source: src, target: dst, type, weight: weight || 1 });
     }
+    function addUndirectedEdge(a, b, type, weight) {
+      // Normalize order to avoid duplicate edges for undirected relations
+      const [src, dst] = a < b ? [a, b] : [b, a];
+      addEdge(src, dst, type, weight);
+    }
     for (const n of notes) {
       const sugg = suggestForNoteId(notes, n.id, 5) || { solution_to_problem: [], problem_to_solution: [] };
       // Only show the updated 'after' connection (Limit -> Solution per spec)
       for (const e of (sugg.solution_to_problem || [])) addEdge(n.id, e.id, 'limit->after', e.score);
+    }
+
+    // Add tag-based connections when subject is 'idea'
+    if (subject === 'idea') {
+      // Normalize tags per note
+      const tagSets = notes.map(n => ({
+        id: n.id,
+        tags: new Set(
+          Array.isArray(n.tags)
+            ? n.tags
+                .map(t => t != null ? String(t).trim().toLowerCase() : '')
+                .filter(Boolean)
+            : []
+        )
+      }));
+      // For each pair, compute overlap count and add an undirected 'tag' edge
+      for (let i = 0; i < tagSets.length; i++) {
+        for (let j = i + 1; j < tagSets.length; j++) {
+          const a = tagSets[i];
+          const b = tagSets[j];
+          if (!a.tags.size || !b.tags.size) continue;
+          // Count intersection size
+          let overlap = 0;
+          const small = a.tags.size <= b.tags.size ? a.tags : b.tags;
+          const large = a.tags.size <= b.tags.size ? b.tags : a.tags;
+          for (const t of small) if (large.has(t)) overlap++;
+          if (overlap > 0) addUndirectedEdge(a.id, b.id, 'tag', overlap);
+        }
+      }
     }
     const edges = Array.from(edgesMap.values());
     res.json({ subject: subject || null, nodes, edges });

@@ -2,20 +2,20 @@
 
 ## Problem
 
-apple
+ddd
 
 ## Solution
 
-banana
-
-## Limit
-
-hello
+ddd
 
 ## Details
 
-hi
+Summary:
+
+ddd
 
 ## Metadata
 
-- Subject: banana
+- Subject: idea
+- Tags: 3
+- idea_summary: ddd

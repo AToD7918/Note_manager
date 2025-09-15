@@ -865,20 +865,39 @@ export default function App() {
                 <div>
                   <div className="title">{graphSelected.title || 'Untitled'}</div>
                   <div className="meta">{new Date(graphSelected.updated_at).toLocaleString()} · {graphSelected.subject || '-'}</div>
-                  {!!(graphSelected.problem||'').trim() && (
-                    <div className="section"><label className="muted">Problem</label><div>{graphSelected.problem}</div></div>
-                  )}
-                  {!!(graphSelected.solution||'').trim() && (
-                    <div className="section"><label className="muted">Solution</label><div>{graphSelected.solution}</div></div>
-                  )}
-                  {!!(((graphSelected.props||{}).summary || '').trim()) && (
-                    <div className="section"><label className="muted">Summary</label><div>{(graphSelected.props||{}).summary}</div></div>
-                  )}
-                  {!!(graphSelected.limit||'').trim() && (
-                    <div className="section"><label className="muted">Limit</label><div>{graphSelected.limit}</div></div>
-                  )}
-                  {!!(graphSelected.details||'').trim() && (
-                    <div className="section"><label className="muted">Details</label><div>{graphSelected.details}</div></div>
+                  {((graphSelected.subject || '').toLowerCase() === 'idea') ? (
+                    <>
+                      {!!(((graphSelected.props||{}).idea_summary || '').trim()) && (
+                        <div className="section"><label className="muted">Summary</label><div>{(graphSelected.props||{}).idea_summary}</div></div>
+                      )}
+                      {(() => {
+                        const tags = Array.isArray(graphSelected.tags) ? graphSelected.tags : ((graphSelected.tags||'').toString().split(',').map(s=>s.trim()).filter(Boolean))
+                        return tags.length ? (
+                          <div className="section"><label className="muted">Tags</label><div>{tags.join(', ')}</div></div>
+                        ) : null
+                      })()}
+                      {!!(graphSelected.details||'').trim() && (
+                        <div className="section"><label className="muted">Details</label><div>{graphSelected.details}</div></div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {!!(graphSelected.problem||'').trim() && (
+                        <div className="section"><label className="muted">Problem</label><div>{graphSelected.problem}</div></div>
+                      )}
+                      {!!(graphSelected.solution||'').trim() && (
+                        <div className="section"><label className="muted">Solution</label><div>{graphSelected.solution}</div></div>
+                      )}
+                      {!!(((graphSelected.props||{}).summary || '').trim()) && (
+                        <div className="section"><label className="muted">Summary</label><div>{(graphSelected.props||{}).summary}</div></div>
+                      )}
+                      {!!(graphSelected.limit||'').trim() && (
+                        <div className="section"><label className="muted">Limit</label><div>{graphSelected.limit}</div></div>
+                      )}
+                      {!!(graphSelected.details||'').trim() && (
+                        <div className="section"><label className="muted">Details</label><div>{graphSelected.details}</div></div>
+                      )}
+                    </>
                   )}
                   <div style={{ marginTop: 12 }}>
                     <button className="btn" onClick={()=>{ setSelectedId(graphSelected.id); setView('notes'); }}>Open in Notes</button>
@@ -1163,6 +1182,29 @@ function CustomProps({ propsObj, onChange }) {
 }
 
 function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
+  // Use a consistent base zoom so node pixel sizes feel the same across subjects
+  const BASE_ZOOM = 1.0
+  const getTags = React.useCallback((note) => {
+    if (!note) return []
+    const out = []
+    const pushAll = (arr) => { try { for (const v of arr) { const s = (v ?? '').toString().trim(); if (s) out.push(s) } } catch {}
+    }
+    if (Array.isArray(note.tags) && note.tags.length) {
+      pushAll(note.tags)
+    } else if (typeof note.tags === 'string' && note.tags.trim()) {
+      pushAll(note.tags.split(','))
+    }
+    const p = note.props || {}
+    if (out.length === 0) {
+      if (Array.isArray(p.tags) && p.tags.length) pushAll(p.tags)
+      else if (typeof p.tags === 'string' && p.tags.trim()) pushAll(p.tags.split(','))
+    }
+    if (out.length === 0) {
+      if (Array.isArray(p.keywords) && p.keywords.length) pushAll(p.keywords)
+      else if (typeof p.keywords === 'string' && p.keywords.trim()) pushAll(p.keywords.split(','))
+    }
+    return out
+  }, [])
   const containerRef = React.useRef(null)
   const cyRef = React.useRef(null)
   const hasLaidOutRef = React.useRef(false)
@@ -1171,7 +1213,13 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
   const [data, setData] = useState({ nodes: [], edges: [] })
 
   // Helpers for persisting positions per subject
-  const subjKey = React.useMemo(() => `graphPositions:${(subject||'').toString().toLowerCase()}`,[subject])
+  const subjKey = React.useMemo(() => {
+    const s = (subject||'').toString().toLowerCase()
+    // Store idea positions under a dedicated key, independent from other subjects
+    if (s === 'idea') return 'graphIdea:positions'
+    return `graphPositions:${s}`
+  },[subject])
+
   const loadPositions = React.useCallback(() => {
     try { const raw = localStorage.getItem(subjKey); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
   }, [subjKey])
@@ -1231,10 +1279,18 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
           style: {
             'width': 1,
             'line-color': '#64748b',
-            'target-arrow-color': '#64748b',
-            'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.7,
+            'target-arrow-shape': 'none',
             'curve-style': 'bezier'
+          }
+        },
+        {
+          selector: 'edge[tagEdge]',
+          style: {
+            'width': 2,
+            'line-color': '#94a3b8',
+            'curve-style': 'bezier',
+            'target-arrow-shape': 'none',
+            'source-arrow-shape': 'none'
           }
         },
         {
@@ -1247,28 +1303,71 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
           selector: 'edge:selected',
           style: {
             'line-color': '#22c55e',
-            'target-arrow-color': '#22c55e'
+            'target-arrow-shape': 'none'
           }
         }
       ],
-  layout: { name: 'cose' },
-  wheelSensitivity: 0.2
+      layout: { name: 'cose' },
+      wheelSensitivity: 2
     })
     cyRef.current = cy
 
     // Initial draw with current data (handles case where data arrived before cy init)
     try {
-      const elements = []
-      for (const n of (data.nodes || [])) {
+  const elements = []
+  const isIdea = ((subject||'').toString().toLowerCase() === 'idea')
+      // Build node list: for idea, use client notes filtered by subject; otherwise, use server graph nodes
+      const nodeList = isIdea
+        ? (notes||[]).filter(nn => ((nn.subject||'').toString().toLowerCase() === 'idea')).map(nn => ({ id: `${nn.id}`, label: nn.title || 'Untitled', idRaw: nn.id }))
+        : (data.nodes || []).map(n => ({ id: `${n.id}`, label: n.title || 'Untitled', idRaw: n.id }))
+      for (const n of nodeList) {
         const id = `${n.id}`
-        elements.push({ data: { id, label: n.title || 'Untitled', idRaw: n.id } })
+        elements.push({ data: { id, label: n.label, idRaw: n.idRaw } })
       }
-      let edgeCount = 0
-      for (const e of (data.edges || [])) {
-        const sid = `${e.source}`
-        const tid = `${e.target}`
-        const eid = `e${edgeCount++}-${sid}->${tid}`
-        elements.push({ data: { id: eid, source: sid, target: tid } })
+  let edgeCount = 0
+      // For idea subject, ignore server-provided edges and build tag-based edges only
+      if (!isIdea) {
+        for (const e of (data.edges || [])) {
+          const sid = `${e.source}`
+          const tid = `${e.target}`
+          const eid = `e${edgeCount++}-${sid}->${tid}`
+          elements.push({ data: { id: eid, source: sid, target: tid } })
+        }
+      }
+      // For idea: add tag-based undirected edges only
+      if (isIdea) {
+        try {
+          // Build tag index from available notes (client has full notes state)
+          const byId = new Map((notes||[]).map(n=>[String(n.id), n]))
+          const tagToIds = new Map()
+          for (const n of nodeList) {
+            const note = byId.get(String(n.idRaw || n.id)) || byId.get(String(n.id))
+            if (!note) continue
+            const rawTags = getTags(note)
+            for (const raw of rawTags) {
+              const norm = (raw ?? '').toString().trim().toLowerCase()
+              if (!norm) continue
+              if (!tagToIds.has(norm)) tagToIds.set(norm, new Set())
+              tagToIds.get(norm).add(String(n.id))
+            }
+          }
+          // For each tag group, connect all pairs once
+          const seen = new Set()
+          for (const [normTag, idSet] of tagToIds.entries()) {
+            const ids = Array.from(idSet)
+            const safeTag = normTag.replace(/[^a-z0-9_-]+/g, '_')
+            for (let i=0;i<ids.length;i++) {
+              for (let j=i+1;j<ids.length;j++) {
+                const a = ids[i], b = ids[j]
+                const key = a < b ? `${a}|${b}` : `${b}|${a}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                const eid = `t-${safeTag}-${a}-${b}-${edgeCount++}`
+                elements.push({ data: { id: eid, source: `${a}`, target: `${b}`, tagEdge: true, tagName: normTag } })
+              }
+            }
+          }
+        } catch {}
       }
       if (elements.length) {
         const saved = loadPositions();
@@ -1285,11 +1384,15 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
         cy.add(edgeEles)
         if (Object.keys(saved).length === 0) {
           const layout = cy.layout({ name: 'cose', animate: false })
-          cy.once('layoutstop', () => { hasLaidOutRef.current = true; try { cy.fit(undefined, 15) } catch {}; savePositions(); })
+          cy.once('layoutstop', () => { 
+            hasLaidOutRef.current = true; 
+            try { cy.center(); cy.zoom(BASE_ZOOM) } catch {};
+            savePositions(); 
+          })
           layout.run()
         } else {
           hasLaidOutRef.current = true
-          try { cy.fit(undefined, 15) } catch {}
+          try { cy.center(); cy.zoom(BASE_ZOOM) } catch {}
         }
       }
     } catch {}
@@ -1330,7 +1433,10 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
     if (!cy) return
     try {
       // Build new node/edge sets
-      const newNodes = (data.nodes || []).map(n => ({ id: `${n.id}`, label: n.title || 'Untitled', idRaw: n.id }))
+      const isIdea = ((subject||'').toString().toLowerCase() === 'idea')
+      const newNodes = isIdea
+        ? (notes||[]).filter(nn => ((nn.subject||'').toString().toLowerCase() === 'idea')).map(nn => ({ id: `${nn.id}`, label: nn.title || 'Untitled', idRaw: nn.id }))
+        : (data.nodes || []).map(n => ({ id: `${n.id}`, label: n.title || 'Untitled', idRaw: n.id }))
       const newNodeIds = new Set(newNodes.map(n => n.id))
       const newEdges = (data.edges || []).map((e, i) => ({ id: `e${i}-${e.source}->${e.target}`, source: `${e.source}`, target: `${e.target}` }))
 
@@ -1350,11 +1456,15 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
         cy.add(newEdges.map(e => ({ data: e })))
         if (Object.keys(saved).length === 0 && newNodes.length > 0) {
           const layout = cy.layout({ name: 'cose', animate: false })
-          cy.once('layoutstop', () => { hasLaidOutRef.current = true; try { cy.fit(undefined, 15) } catch {}; savePositions(); })
+          cy.once('layoutstop', () => { 
+            hasLaidOutRef.current = true; 
+            try { cy.center(); cy.zoom(BASE_ZOOM) } catch {};
+            savePositions();
+          })
           layout.run()
         } else {
           hasLaidOutRef.current = true
-          try { cy.fit(undefined, 15) } catch {}
+          try { cy.center(); cy.zoom(BASE_ZOOM) } catch {}
         }
         return
       }
@@ -1378,12 +1488,50 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
           }
         }
       }
-      // 2) Replace edges (edges don't affect node positions)
+      // 2) Replace edges
       cy.edges().remove()
-      cy.add(newEdges.map(e => ({ data: e })))
+      // For idea subject, we do not add server edges; for others, add server edges
+      if (!isIdea) {
+        cy.add(newEdges.map(e => ({ data: e })))
+      }
+      // Rebuild tag-based edges when subject is idea (only)
+      if (isIdea) {
+        try {
+          const byId = new Map((notes||[]).map(n=>[String(n.id), n]))
+          const tagToIds = new Map()
+          for (const n of newNodes) {
+            const note = byId.get(String(n.idRaw || n.id)) || byId.get(String(n.id))
+            if (!note) continue
+            const rawTags = getTags(note)
+            for (const raw of rawTags) {
+              const norm = (raw ?? '').toString().trim().toLowerCase()
+              if (!norm) continue
+              if (!tagToIds.has(norm)) tagToIds.set(norm, new Set())
+              tagToIds.get(norm).add(String(n.id))
+            }
+          }
+          const seen = new Set()
+          for (const [normTag, idSet] of tagToIds.entries()) {
+            const ids = Array.from(idSet)
+            const safeTag = normTag.replace(/[^a-z0-9_-]+/g, '_')
+            for (let i=0;i<ids.length;i++) {
+              for (let j=i+1;j<ids.length;j++) {
+                const a = ids[i], b = ids[j]
+                const key = a < b ? `${a}|${b}` : `${b}|${a}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                const eid = `t-${safeTag}-${a}-${b}`
+                if (cy.getElementById(eid).empty()) {
+                  cy.add({ data: { id: eid, source: `${a}`, target: `${b}`, tagEdge: true, tagName: normTag } })
+                }
+              }
+            }
+          }
+        } catch {}
+      }
       // 3) Keep current viewport; do not rerun layout
     } catch {}
-  }, [data, loadPositions, savePositions])
+  }, [data, loadPositions, savePositions, subject, notes])
 
   // When becoming visible, force a resize/fit to avoid blank canvas
   useEffect(() => {
@@ -1392,7 +1540,8 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
     if (!cy) return
     try {
       cy.resize()
-      cy.fit(undefined, 12)
+      cy.center();
+      cy.zoom(BASE_ZOOM)
     } catch {}
   }, [visible])
 
@@ -1404,7 +1553,8 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
   hasLaidOutRef.current = false
     try {
       cy.resize()
-      cy.fit(undefined, 12)
+      cy.center();
+      cy.zoom(BASE_ZOOM)
     } catch {}
   }, [subject])
 

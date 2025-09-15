@@ -1,16 +1,20 @@
 {
   "id": "dlgab8u3kx8mfavxw3v",
   "title": "first note",
-  "subject": "banana",
-  "problem": "apple",
-  "solution": "banana",
-  "limit": "hello",
-  "details": "hi",
+  "subject": "idea",
+  "problem": "ddd",
+  "solution": "ddd",
+  "limit": "",
+  "details": "Summary:\n\nddd",
   "created_at": "2025-09-08T08:54:16.267Z",
-  "updated_at": "2025-09-08T15:04:10.714Z",
+  "updated_at": "2025-09-15T07:24:09.618Z",
   "status": "",
   "priority": "",
   "due_date": "",
-  "tags": [],
-  "props": {}
+  "tags": [
+    "3"
+  ],
+  "props": {
+    "idea_summary": "ddd"
+  }
 }

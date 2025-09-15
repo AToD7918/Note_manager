@@ -2,20 +2,20 @@
 
 ## Problem
 
-apple
+ddd
 
 ## Solution
 
-cranberry
-
-## Limit
-
-hello'
+ddd
 
 ## Details
 
-hi'
+Summary:
+
+ddd
 
 ## Metadata
 
-- Subject: apple
+- Subject: idea
+- Tags: 3D
+- idea_summary: ddd
