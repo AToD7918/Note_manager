@@ -98,11 +98,11 @@ body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
 .muted { color: var(--muted); font-size:12px; }
 
 /* Rich Editor */
-.rich-editor { border:1px solid var(--border); border-radius:8px; background:#0b1220; }
+.rich-editor { border:1px solid var(--border); border-radius:8px; background:#0b1220; display:flex; flex-direction:column; height:100%; }
 .rich-toolbar { display:flex; flex-wrap:wrap; gap:6px; padding:8px; border-bottom:1px solid var(--border); position:sticky; top:0; background:#0b1220; z-index:1; }
 .rich-editor .btn { padding:4px 8px; }
 .rich-editor .btn.toggled { background: #334155; border-color:#334155; }
-.rich-editor-content { min-height: 420px; padding: 12px; outline: none; }
+.rich-editor-content { min-height: 456px; padding: 12px; outline: none; height: 100%; }
 .rich-editor-content pre { background:#0a0f1a; padding:10px; border-radius:6px; overflow:auto; }
 .rich-editor-content code { background:#0a0f1a; padding:2px 4px; border-radius:4px; }
 .rich-editor-content blockquote { border-left:3px solid #334155; background:#0b1220; margin:8px 0; padding:8px 12px; border-radius:6px; }
@@ -117,11 +117,13 @@ body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
 .rich-editor-content mark { background: #f59e0b33; color: inherit; padding: 0 2px; border-radius: 2px; }
 .rich-editor-content table { width:100%; border-collapse: collapse; }
 .rich-editor-content table th, .rich-editor-content table td { border:1px solid var(--border); padding:6px; }
+/* Make bold text thicker for better contrast */
+.rich-editor-content strong, .rich-editor-content b { font-weight: 800; }
 
 /* Rich editor boxed container so rest of UI stays visible even on failure */
-.rich-box { border:1px solid var(--border); border-radius:8px; background:#0b1220; display:flex; flex-direction:column; max-height:60vh; }
+.rich-box { border:1px solid var(--border); border-radius:8px; background:#0b1220; display:flex; flex-direction:column; max-height:65vh; }
 .rich-box-toolbar { display:flex; gap:8px; border-bottom:1px solid var(--border); padding:8px; }
-.rich-box-body { padding:0; overflow:auto; }
+.rich-box-body { padding:0; overflow:auto; flex:1; display:flex; }
 
 /* Modal for shortcuts */
 .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000; }
@@ -130,6 +132,24 @@ body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
 .modal-title { font-weight:700; }
 .modal-body { padding:12px; }
 .shortcut-list { margin:0; padding-left:18px; display:grid; grid-template-columns: 1fr; gap:6px; }
+
+/* Slash menu */
+.slash-menu { background:#0b1220; border:1px solid var(--border); border-radius:8px; box-shadow: 0 6px 16px rgba(0,0,0,0.35); min-width:160px; font-size:12px; }
+.slash-item { padding:6px 8px; cursor:pointer; }
+.slash-item:hover, .slash-item.active { background:#111827; }
+.slash-submenu { background:#0b1220; border:1px solid var(--border); border-radius:8px; box-shadow: 0 6px 16px rgba(0,0,0,0.35); min-width:160px; font-size:12px; position:absolute; }
+
+/* Quick block toolbar */
+.quickbar { display:flex; gap:4px; padding:4px; background:#0b1220; border:1px solid var(--border); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.35); font-size:12px; }
+.quickmenu { display:flex; gap:10px; padding:6px; background:#0b1220; border:1px solid var(--border); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.35); font-size:12px; position:relative; }
+.quickmenu-horizontal { gap:6px; }
+.quickmenu-item { padding:4px 8px; border-radius:6px; cursor:pointer; border:1px solid transparent; background:#0b1220; display:inline-flex; align-items:center; gap:4px; }
+.quickmenu-item:hover { background:#111827; border-color:#1f2937; }
+.quickmenu-item.toggled { background:#1f2937; border-color:#334155; }
+.caret-down { display:inline-block; width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:6px solid #94a3b8; margin-left:2px; }
+.quickmenu-dropdown { background:#0b1220; border:1px solid var(--border); border-radius:8px; box-shadow:0 6px 16px rgba(0,0,0,0.35); min-width:160px; margin-top:4px; }
+.quickmenu-dropdown-item { padding:6px 8px; cursor:pointer; }
+.quickmenu-dropdown-item:hover, .quickmenu-dropdown-item.toggled { background:#111827; }
 
 /* Sidebar bottom all-fields search */
 .sidebar-bottom { border-top:1px solid var(--border); padding:8px 12px; }

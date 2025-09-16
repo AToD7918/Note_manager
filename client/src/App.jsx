@@ -213,7 +213,7 @@ export default function App() {
 
   const selected = useMemo(() => notes.find(n=>n.id===selectedId) || null, [notes, selectedId])
   const graphSelected = useMemo(() => notes.find(n=>n.id===graphSelectedId) || null, [notes, graphSelectedId])
-  const [draft, setDraft] = useState({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', status: '', priority: '', due_date: '', tags: '', props: {} })
+  const [draft, setDraft] = useState({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', details_rich: null, status: '', priority: '', due_date: '', tags: '', props: {} })
   const isNew = !selected
   const subjLc = (draft.subject || '').toLowerCase()
   const isPaper = subjLc === 'paper'
@@ -229,6 +229,7 @@ export default function App() {
   const [useRichDetails, setUseRichDetails] = useState(true)
   const [richMountKey, setRichMountKey] = useState(0)
   const [richFailed, setRichFailed] = useState(false)
+  const [shortcutsKey, setShortcutsKey] = useState(0) // trigger-only key for shortcuts modal
 
   useEffect(() => {
     // Reset stages when subject changes
@@ -237,6 +238,7 @@ export default function App() {
     setUseRichDetails(true)
     setRichFailed(false)
     setRichMountKey(k=>k+1)
+    setShortcutsKey(0)
   }, [draft.subject])
 
   // When switching paper stages, ensure a clean editor remount on entering stage 2
@@ -244,6 +246,8 @@ export default function App() {
     if (paperStage === 2) {
       setRichFailed(false)
       setRichMountKey(k=>k+1)
+      // Do not auto-open shortcuts; only open when the user clicks the button.
+      setShortcutsKey(0)
     }
   }, [paperStage])
 
@@ -290,6 +294,7 @@ export default function App() {
         solution: selected.solution || '',
         limit: selected.limit || '',
         details: selected.details || '',
+        details_rich: selected.details_rich || null,
         status: selected.status || '',
         priority: selected.priority ?? '',
         due_date: selected.due_date || '',
@@ -297,7 +302,7 @@ export default function App() {
         props: selected.props || {}
       })
     } else {
-      setDraft({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', status: '', priority: '', due_date: '', tags: '', props: {} })
+      setDraft({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', details_rich: null, status: '', priority: '', due_date: '', tags: '', props: {} })
     }
   }, [selectedId])
 
@@ -463,8 +468,9 @@ export default function App() {
               })()
             ].filter(Boolean).join('\n\n')
           : isCustomSubject
-            ? [customCombined, draft.details].filter(Boolean).join('\n\n')
+      ? [customCombined, draft.details].filter(Boolean).join('\n\n')
             : draft.details,
+    details_rich: draft.details_rich || null,
         status: draft.status,
         priority: draft.priority === '' ? '' : Number(draft.priority),
         due_date: draft.due_date,
@@ -491,7 +497,7 @@ export default function App() {
 
   function handleNew() {
     setSelectedId(null)
-    setDraft({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', status: '', priority: '', due_date: '', tags: '', props: {} })
+    setDraft({ title: '', subject: '', problem: '', solution: '', limit: '', details: '', details_rich: null, status: '', priority: '', due_date: '', tags: '', props: {} })
     setSimilar(null)
   }
 
@@ -552,17 +558,7 @@ export default function App() {
           
           <div className="editor-body">
             <div className="fields">
-              <div className="field">
-                <label>Subject</label>
-                <div className="subject-row">
-                  <select value={draft.subject} onChange={e=>setDraft({ ...draft, subject: e.target.value })}>
-                    <option value="">-</option>
-                    {subjects.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-                    {draft.subject && !subjects.find(s=>s.name===draft.subject) && <option value={draft.subject}>{draft.subject}</option>}
-                  </select>
-                  <button className="btn" onClick={()=>setView('subjects')}>Manage</button>
-                </div>
-              </div>
+              {/* Subject picker removed per request */}
               {showSubjectSpecificFields && isPaper && !usesSchema && (
                 <LabelInput
                   label="Link"
@@ -608,14 +604,14 @@ export default function App() {
                       // Stage 2: Rich editor
                       return (
                         <>
-                          <div className="field small-title"><label>More detail</label></div>
-                          <div className="rich-box">
-                            <div className="rich-box-toolbar">
-                              <div className="muted" style={{ alignSelf:'center' }}>Rich editor</div>
-                              <div style={{ flex:1 }} />
+                          <div className="rich-box" style={{ maxHeight:'unset', height:'calc(100vh - 224px)' }}>
+                            <div className="rich-box-toolbar" style={{ justifyContent:'flex-end' }}>
                               <button className="btn" onClick={()=>setUseRichDetails(!useRichDetails)}>{useRichDetails ? 'Use simple textarea' : 'Use rich editor'}</button>
+                              {useRichDetails && (
+                                <button className="btn" style={{ marginLeft:8 }} onClick={()=>setShortcutsKey(k=>k+1)}>Shortcuts</button>
+                              )}
                             </div>
-                            <div className="rich-box-body">
+                            <div className="rich-box-body" style={{ height:'100%', display:'flex', flexDirection:'column' }}>
                               {useRichDetails ? (
                                 <ErrorBoundary fallback={
                                   <div style={{ padding:12 }}>
@@ -626,9 +622,10 @@ export default function App() {
                                 } onError={()=>setRichFailed(true)}>
                                   <RichDetailsEditor
                                     key={`rich-${richMountKey}`}
-                                    valueJSON={(draft.props?.details_rich && typeof draft.props.details_rich === 'object') ? draft.props.details_rich : undefined}
-                                    onUpdateJSON={(json)=>setDraft({ ...draft, props: { ...(draft.props||{}), details_rich: json } })}
-                                    onUpdatePlain={(text)=>setDraft({ ...draft, details: text })}
+                                    valueJSON={(draft.details_rich && typeof draft.details_rich === 'object') ? draft.details_rich : undefined}
+                                    onUpdateJSON={(json)=>setDraft({ ...draft, details_rich: json })}
+                                    onUpdatePlain={undefined}
+                                    openShortcutsSignal={shortcutsKey}
                                   />
                                 </ErrorBoundary>
                               ) : (
@@ -637,7 +634,7 @@ export default function App() {
                                   value={draft.details}
                                   onChange={v=>setDraft({ ...draft, details: v })}
                                   placeholder="Write all additional details, notes, and extended discussion here..."
-                                  rows={18}
+                                  rows={21}
                                   className="resize-vertical"
                                 />
                               )}
@@ -661,7 +658,7 @@ export default function App() {
                         return <LabelInput key={key} label={label} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="" rows={1} />
                       }
                       if (key === 'details' || key === 'note' || key === 'notes') {
-                        return <LabelInput key={key} label={label} value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="" rows={12} className="resize-vertical" />
+                        return <LabelInput key={key} label={label} value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="" rows={15} className="resize-vertical" />
                       }
                       if (key === 'summary') {
                         const val = (draft.props || {}).summary || ''
@@ -899,9 +896,9 @@ export default function App() {
                           } onError={()=>setRichFailed(true)}>
                             <RichDetailsEditor
                               key={`rich-${richMountKey}`}
-                              valueJSON={(draft.props?.details_rich && typeof draft.props.details_rich === 'object') ? draft.props.details_rich : undefined}
-                              onUpdateJSON={(json)=>setDraft({ ...draft, props: { ...(draft.props||{}), details_rich: json } })}
-                              onUpdatePlain={(text)=>setDraft({ ...draft, details: text })}
+                              valueJSON={(draft.details_rich && typeof draft.details_rich === 'object') ? draft.details_rich : undefined}
+                              onUpdateJSON={(json)=>setDraft({ ...draft, details_rich: json })}
+                              onUpdatePlain={undefined}
                             />
                           </ErrorBoundary>
                         ) : (
@@ -923,7 +920,7 @@ export default function App() {
                 ) : (
                   <>
                     <LabelInput label="Problem" required value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="Describe the problem..." rows={isPaper ? 1 : 5} />
-                    <LabelInput label="Details" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Additional context..." rows={isPaper ? 12 : 5} className={isPaper ? 'resize-vertical' : ''} />
+                    <LabelInput label="Details" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Additional context..." rows={isPaper ? 15 : 5} className={isPaper ? 'resize-vertical' : ''} />
                     <LabelInput label="Solution" required value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="Describe the solution..." rows={isPaper ? 1 : 5} />
                     <LabelInput label={isPaper ? 'Limits' : 'Limit'} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="Constraints, limitations..." rows={isPaper ? 1 : 5} />
                     {isPaper && (

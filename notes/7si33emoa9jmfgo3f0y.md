@@ -14,7 +14,7 @@
 
 ## Details
 
-fdsdf
+ㄴㅇㄹㄴㅇㄹㅇㄹㅇㄹㄴㅇㄹㄴㅇㄹ
 
 ## Metadata
 
@@ -25,3 +25,4 @@ fdsdf
 - limit: 
 - details: 
 - keywords: 
+- details_rich: [object Object]

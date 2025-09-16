@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS notes (
   solution TEXT NOT NULL,
   limit_text TEXT,
   details TEXT,
+  details_rich_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   -- Notion-like metadata (added via migration if missing)
@@ -95,6 +96,7 @@ try {
   addNoteCol('due_date', 'TEXT');
   addNoteCol('tags_json', 'TEXT');
   addNoteCol('meta_json', 'TEXT');
+  addNoteCol('details_rich_json', 'TEXT');
 
   // Subjects table migrations
   const subCols = db.prepare('PRAGMA table_info(subjects)').all().map(r => r.name);
@@ -204,6 +206,7 @@ function fromRow(row) {
     solution: row.solution,
     limit: row.limit_text,
     details: row.details,
+    details_rich: row.details_rich_json ? (() => { try { return JSON.parse(row.details_rich_json) || null; } catch { return null; } })() : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     status: row.status || '',
@@ -217,6 +220,7 @@ function fromRow(row) {
 function toDbNote(payload, base) {
   const tags = normalizeTags(payload.tags);
   const props = payload.props && typeof payload.props === 'object' ? payload.props : {};
+  const detailsRich = (payload.details_rich && typeof payload.details_rich === 'object') ? payload.details_rich : null;
   return {
     id: base.id,
     title: (payload.title && payload.title.trim()) || base.title,
@@ -225,6 +229,7 @@ function toDbNote(payload, base) {
     solution: sanitize(payload.solution),
     limit_text: sanitize(payload.limit),
     details: sanitize(payload.details),
+    details_rich_json: detailsRich ? JSON.stringify(detailsRich) : null,
     created_at: base.created_at,
     updated_at: base.updated_at,
     status: payload.status ? String(payload.status) : null,
@@ -255,7 +260,7 @@ app.post('/api/notes', (req, res) => {
   const t = title && title.trim() ? title.trim() : extractTitle(problem);
   const base = { id, title: t, created_at: now, updated_at: now };
   const dbNote = toDbNote(req.body || {}, base);
-  const stmt = db.prepare('INSERT INTO notes (id, title, subject, problem, solution, limit_text, details, created_at, updated_at, status, priority, due_date, tags_json, meta_json) VALUES (@id,@title,@subject,@problem,@solution,@limit_text,@details,@created_at,@updated_at,@status,@priority,@due_date,@tags_json,@meta_json)');
+  const stmt = db.prepare('INSERT INTO notes (id, title, subject, problem, solution, limit_text, details, details_rich_json, created_at, updated_at, status, priority, due_date, tags_json, meta_json) VALUES (@id,@title,@subject,@problem,@solution,@limit_text,@details,@details_rich_json,@created_at,@updated_at,@status,@priority,@due_date,@tags_json,@meta_json)');
   stmt.run(dbNote);
   // file storage
   const apiNote = fromRow(db.prepare('SELECT * FROM notes WHERE id=?').get(id));
@@ -274,7 +279,7 @@ app.put('/api/notes/:id', (req, res) => {
   const t = (req.body.title && req.body.title.trim()) ? req.body.title.trim() : extractTitle(problem);
   const base = { id, title: t, created_at: existing.created_at, updated_at: now };
   const dbNote = toDbNote(req.body || {}, base);
-  db.prepare('UPDATE notes SET title=@title, subject=@subject, problem=@problem, solution=@solution, limit_text=@limit_text, details=@details, updated_at=@updated_at, status=@status, priority=@priority, due_date=@due_date, tags_json=@tags_json, meta_json=@meta_json WHERE id=@id').run(dbNote);
+  db.prepare('UPDATE notes SET title=@title, subject=@subject, problem=@problem, solution=@solution, limit_text=@limit_text, details=@details, details_rich_json=@details_rich_json, updated_at=@updated_at, status=@status, priority=@priority, due_date=@due_date, tags_json=@tags_json, meta_json=@meta_json WHERE id=@id').run(dbNote);
   const apiNote = fromRow(db.prepare('SELECT * FROM notes WHERE id=?').get(id));
   fs.writeFileSync(path.join(fileNotesDir, `${id}.json`), JSON.stringify(apiNote, null, 2), 'utf-8');
   ensureMarkdown(id, apiNote);
