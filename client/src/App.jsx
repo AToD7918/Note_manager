@@ -1,5 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, Suspense } from 'react'
 import cytoscape from 'cytoscape'
+// Replace lazy import with static import to avoid chunk loading failures
+import RichDetailsEditor from './components/RichDetailsEditor'
+
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { hasError:false, error:null } }
+  static getDerivedStateFromError(error){ return { hasError:true, error } }
+  componentDidCatch(error, info){ try { this.props.onError && this.props.onError(error, info) } catch {} }
+  render(){ if(this.state.hasError){ return this.props.fallback || null } return this.props.children }
+}
 
   const api = {
   async list() {
@@ -140,14 +149,14 @@ function Sidebar({ notes, selectedId, onSelect, onNew, query, onQueryChange, onS
   )
 }
 
-function LabelInput({ label, required, value, onChange, placeholder, textarea=true, rows=5 }) {
+function LabelInput({ label, required, value, onChange, placeholder, textarea=true, rows=5, className='' }) {
   return (
     <div className="field">
       <label>{label}{required ? ' *' : ''}</label>
       {textarea ? (
-        <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows} />
+        <textarea className={className} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows} />
       ) : (
-        <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} />
+        <input className={className} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} />
       )}
     </div>
   )
@@ -216,11 +225,27 @@ export default function App() {
   const isCustomSubject = !!draft.subject && !isPaper && !isPlainNote && !isIdea
   const showSubjectSpecificFields = !isNew || !!draft.subject
   const [ideaStage, setIdeaStage] = useState(1) // 1: Quick Capture, 2: Idea Card, 3: Detailed Plan
+  const [paperStage, setPaperStage] = useState(1) // 1: Base fields, 2: More detail
+  const [useRichDetails, setUseRichDetails] = useState(true)
+  const [richMountKey, setRichMountKey] = useState(0)
+  const [richFailed, setRichFailed] = useState(false)
 
   useEffect(() => {
-    // Reset stage when subject changes
+    // Reset stages when subject changes
     setIdeaStage(1)
+    setPaperStage(1)
+    setUseRichDetails(true)
+    setRichFailed(false)
+    setRichMountKey(k=>k+1)
   }, [draft.subject])
+
+  // When switching paper stages, ensure a clean editor remount on entering stage 2
+  useEffect(() => {
+    if (paperStage === 2) {
+      setRichFailed(false)
+      setRichMountKey(k=>k+1)
+    }
+  }, [paperStage])
 
   // When switching to a custom subject on a new note, initialize its fields
   useEffect(() => {
@@ -237,14 +262,22 @@ export default function App() {
   }, [usesSchema, schemaFields, selected])
 
   useEffect(() => { (async () => {
-    const data = await api.list();
-    setNotes(data);
-    if (data.length) setSelectedId(data[0].id)
+    try {
+      const data = await api.list();
+      setNotes(data || []);
+      if ((data || []).length) setSelectedId(data[0].id)
+    } catch (e) {
+      console.warn('Failed to load notes', e)
+      setNotes([])
+    }
     try {
       const r = await fetch('/api/subjects');
       const subs = await r.json();
       setSubjects(subs || [])
-    } catch {}
+    } catch (e) {
+      console.warn('Failed to load subjects', e)
+      setSubjects([])
+    }
   })() }, [])
 
   useEffect(() => {
@@ -544,55 +577,140 @@ export default function App() {
                   {schemaFields.length === 0 && (
                     <div className="muted" style={{ marginBottom: 8 }}>No fields defined for this subject. Add fields in Subjects.</div>
                   )}
-                  {schemaFields.map((f, idx) => {
-                    const rawKey = f.key || (f.title || `field_${idx}`)
-                    const key = rawKey.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
-                    const type = (f.type || 'text').toLowerCase()
-                    const label = f.title || key
-                    // Map special keys to top-level fields
-                    if (key === 'problem') {
-                      return <LabelInput key={key} label={label} value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="" />
-                    }
-                    if (key === 'solution') {
-                      return <LabelInput key={key} label={label} value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="" />
-                    }
-                    if (key === 'limit' || key === 'limits') {
-                      return <LabelInput key={key} label={label} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="" />
-                    }
-                    if (key === 'details' || key === 'note' || key === 'notes') {
-                      return <LabelInput key={key} label={label} value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="" />
-                    }
-                    if (type === 'tags' || key === 'tags' || key === 'keywords') {
-                      return (
-                        <div className="prop wide" key={key}>
-                          <label>{label} (comma separated)</label>
-                          <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
-                        </div>
-                      )
-                    }
-                    if (type === 'date') {
-                      const propVal = (draft.props || {})[key]
-                      const val = (draft[key] ?? propVal) || (key==='due_date' ? draft.due_date : '')
-                      const setVal = (v) => {
-                        if (key === 'due_date') setDraft({ ...draft, due_date: v })
-                        else setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
+                  {(() => {
+                    const normKey = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+                    const fields = schemaFields.map((f, idx) => {
+                      const rawKey = f.key || (f.title || `field_${idx}`)
+                      return {
+                        f,
+                        idx,
+                        key: normKey(rawKey),
+                        type: (f.type || 'text').toLowerCase(),
+                        label: f.title || normKey(rawKey)
                       }
+                    })
+                    let ordered = fields
+                    if (isPaper) {
+                      // Desired order, excluding link from main sequence
+                      const keyOrder = ['summary', 'problem', 'details', 'solution', 'limit', 'limits', 'keywords']
+                      const orderIndex = (k) => {
+                        const i = keyOrder.indexOf(k)
+                        if (i !== -1) return i
+                        // push link to the end; keep others after link
+                        if (k === 'link') return Number.MAX_SAFE_INTEGER - 1
+                        return Number.MAX_SAFE_INTEGER
+                      }
+                      ordered = [...fields]
+                        .filter(x => keyOrder.includes(x.key) || x.key === 'link')
+                        .sort((a,b) => orderIndex(a.key) - orderIndex(b.key))
+                    }
+                    if (isPaper && paperStage === 2) {
+                      // Stage 2: Rich editor
                       return (
-                        <div className="field" key={key}>
-                          <label>{label}</label>
-                          <input type="date" value={val} onChange={e=>setVal(e.target.value)} />
-                        </div>
+                        <>
+                          <div className="field small-title"><label>More detail</label></div>
+                          <div className="rich-box">
+                            <div className="rich-box-toolbar">
+                              <div className="muted" style={{ alignSelf:'center' }}>Rich editor</div>
+                              <div style={{ flex:1 }} />
+                              <button className="btn" onClick={()=>setUseRichDetails(!useRichDetails)}>{useRichDetails ? 'Use simple textarea' : 'Use rich editor'}</button>
+                            </div>
+                            <div className="rich-box-body">
+                              {useRichDetails ? (
+                                <ErrorBoundary fallback={
+                                  <div style={{ padding:12 }}>
+                                    <div className="muted" style={{ marginBottom:8 }}>Editor failed to load.</div>
+                                    <button className="btn" onClick={()=>{ setRichFailed(false); setRichMountKey(k=>k+1); }}>Retry remount</button>
+                                    <button className="btn" style={{ marginLeft:8 }} onClick={()=>setUseRichDetails(false)}>Use simple textarea</button>
+                                  </div>
+                                } onError={()=>setRichFailed(true)}>
+                                  <RichDetailsEditor
+                                    key={`rich-${richMountKey}`}
+                                    valueJSON={(draft.props?.details_rich && typeof draft.props.details_rich === 'object') ? draft.props.details_rich : undefined}
+                                    onUpdateJSON={(json)=>setDraft({ ...draft, props: { ...(draft.props||{}), details_rich: json } })}
+                                    onUpdatePlain={(text)=>setDraft({ ...draft, details: text })}
+                                  />
+                                </ErrorBoundary>
+                              ) : (
+                                <LabelInput
+                                  label="Details (simple)"
+                                  value={draft.details}
+                                  onChange={v=>setDraft({ ...draft, details: v })}
+                                  placeholder="Write all additional details, notes, and extended discussion here..."
+                                  rows={18}
+                                  className="resize-vertical"
+                                />
+                              )}
+                            </div>
+                          </div>
+                          <div className="field" style={{ display: 'flex', gap: 8 }}>
+                            <button className="btn" onClick={()=>setPaperStage(1)}>Back</button>
+                          </div>
+                        </>
                       )
                     }
-                    if (type === 'textarea') {
-                      const val = (draft.props || {})[key] || ''
-                      return <LabelInput key={key} label={label} value={val} onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })} placeholder="" rows={5} />
-                    }
-                    // link/text default to single-line
-                    const val = key === 'link' ? (draft.props?.link || '') : ((draft.props || {})[key] || '')
-                    const setVal = (v) => setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
-                    return <LabelInput key={key} label={label} value={val} onChange={setVal} placeholder="" textarea={false} />
-                  })}
+                    const elements = ordered.map(({ f, idx, key, type, label }) => {
+                      // Map special keys to top-level fields with custom rows
+                      if (key === 'problem') {
+                        return <LabelInput key={key} label={label} value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="" rows={1} />
+                      }
+                      if (key === 'solution') {
+                        return <LabelInput key={key} label={label} value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="" rows={1} />
+                      }
+                      if (key === 'limit' || key === 'limits') {
+                        return <LabelInput key={key} label={label} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="" rows={1} />
+                      }
+                      if (key === 'details' || key === 'note' || key === 'notes') {
+                        return <LabelInput key={key} label={label} value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="" rows={12} className="resize-vertical" />
+                      }
+                      if (key === 'summary') {
+                        const val = (draft.props || {}).summary || ''
+                        return <LabelInput key={key} label={label} value={val} onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), summary: v } })} placeholder="" rows={3} className="resize-vertical" />
+                      }
+                      if (type === 'tags' || key === 'tags' || key === 'keywords') {
+                        return (
+                          <div className="prop wide" key={key}>
+                            <label>{label} (comma separated)</label>
+                            <input value={draft.tags} onChange={e=>setDraft({ ...draft, tags: e.target.value })} placeholder="tag1, tag2" />
+                          </div>
+                        )
+                      }
+                      if (type === 'date') {
+                        const propVal = (draft.props || {})[key]
+                        const val = (draft[key] ?? propVal) || (key==='due_date' ? draft.due_date : '')
+                        const setVal = (v) => {
+                          if (key === 'due_date') setDraft({ ...draft, due_date: v })
+                          else setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
+                        }
+                        return (
+                          <div className="field" key={key}>
+                            <label>{label}</label>
+                            <input type="date" value={val} onChange={e=>setVal(e.target.value)} />
+                          </div>
+                        )
+                      }
+                      if (type === 'textarea') {
+                        const val = (draft.props || {})[key] || ''
+                        // Default rows for other textareas
+                        return <LabelInput key={key} label={label} value={val} onChange={v=>setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })} placeholder="" rows={5} />
+                      }
+                      // link/text default to single-line
+                      const val = key === 'link' ? (draft.props?.link || '') : ((draft.props || {})[key] || '')
+                      const setVal = (v) => setDraft({ ...draft, props: { ...(draft.props || {}), [key]: v } })
+                      return <LabelInput key={key} label={label} value={val} onChange={setVal} placeholder="" textarea={false} />
+                    })
+                    return (
+                      <>
+                        {elements}
+                        {isPaper && (
+                          <div className="field" style={{ display: 'flex', gap: 8 }}>
+                            <div style={{ flex:1 }} />
+                            <button className="btn" onClick={()=>setPaperStage(2)}>More detail</button>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
                 </>
               ) : showSubjectSpecificFields && isPlainNote ? (
                 <LabelInput label="Notes" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Write your notes..." />
@@ -760,10 +878,62 @@ export default function App() {
               </>
               ) : showSubjectSpecificFields ? (
               <>
-                <LabelInput label="Problem" required value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="Describe the problem..." />
-                <LabelInput label="Solution" required value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="Describe the solution..." />
-                <LabelInput label={isPaper ? 'Limits' : 'Limit'} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="Constraints, limitations..." />
-                <LabelInput label="Details" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Additional context..." />
+                {/* For non-schema subjects (including paper baseline) */}
+                {isPaper && paperStage === 2 ? (
+                  <>
+                    <div className="field small-title"><label>More detail</label></div>
+                    <div className="rich-box">
+                      <div className="rich-box-toolbar">
+                        <div className="muted" style={{ alignSelf:'center' }}>Rich editor</div>
+                        <div style={{ flex:1 }} />
+                        <button className="btn" onClick={()=>setUseRichDetails(!useRichDetails)}>{useRichDetails ? 'Use simple textarea' : 'Use rich editor'}</button>
+                      </div>
+                      <div className="rich-box-body">
+                        {useRichDetails ? (
+                          <ErrorBoundary fallback={
+                            <div style={{ padding:12 }}>
+                              <div className="muted" style={{ marginBottom:8 }}>Editor failed to load.</div>
+                              <button className="btn" onClick={()=>{ setRichFailed(false); setRichMountKey(k=>k+1); }}>Retry remount</button>
+                              <button className="btn" style={{ marginLeft:8 }} onClick={()=>setUseRichDetails(false)}>Use simple textarea</button>
+                            </div>
+                          } onError={()=>setRichFailed(true)}>
+                            <RichDetailsEditor
+                              key={`rich-${richMountKey}`}
+                              valueJSON={(draft.props?.details_rich && typeof draft.props.details_rich === 'object') ? draft.props.details_rich : undefined}
+                              onUpdateJSON={(json)=>setDraft({ ...draft, props: { ...(draft.props||{}), details_rich: json } })}
+                              onUpdatePlain={(text)=>setDraft({ ...draft, details: text })}
+                            />
+                          </ErrorBoundary>
+                        ) : (
+                          <LabelInput
+                            label="Details (simple)"
+                            value={draft.details}
+                            onChange={v=>setDraft({ ...draft, details: v })}
+                            placeholder="Write all additional details, notes, and extended discussion here..."
+                            rows={18}
+                            className="resize-vertical"
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <div className="field" style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn" onClick={()=>setPaperStage(1)}>Back</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <LabelInput label="Problem" required value={draft.problem} onChange={v=>setDraft({ ...draft, problem: v })} placeholder="Describe the problem..." rows={isPaper ? 1 : 5} />
+                    <LabelInput label="Details" value={draft.details} onChange={v=>setDraft({ ...draft, details: v })} placeholder="Additional context..." rows={isPaper ? 12 : 5} className={isPaper ? 'resize-vertical' : ''} />
+                    <LabelInput label="Solution" required value={draft.solution} onChange={v=>setDraft({ ...draft, solution: v })} placeholder="Describe the solution..." rows={isPaper ? 1 : 5} />
+                    <LabelInput label={isPaper ? 'Limits' : 'Limit'} value={draft.limit} onChange={v=>setDraft({ ...draft, limit: v })} placeholder="Constraints, limitations..." rows={isPaper ? 1 : 5} />
+                    {isPaper && (
+                      <div className="field" style={{ display: 'flex', gap: 8 }}>
+                        <div style={{ flex:1 }} />
+                        <button className="btn" onClick={()=>setPaperStage(2)}>More detail</button>
+                      </div>
+                    )}
+                  </>
+                )}
                 <div className="properties">
                   <div className="props-row">
                     <div className="prop">
@@ -799,7 +969,7 @@ export default function App() {
               </>
               ) : null}
             </div>
-            {showSubjectSpecificFields && isPaper ? (
+            {showSubjectSpecificFields && isPaper && paperStage !== 2 ? (
               <Suggestions data={selected ? similar : null} onSelect={setSelectedId} />
             ) : showSubjectSpecificFields && isIdea ? (
               <SuggestionPlaceholder message="Ideas can later be used as solutions for papers. Save this idea and link it from a paper." />
@@ -1311,6 +1481,8 @@ function GraphCanvas({ subject = 'paper', notes, onOpen, visible }) {
       wheelSensitivity: 2
     })
     cyRef.current = cy
+
+   
 
     // Initial draw with current data (handles case where data arrived before cy init)
     try {

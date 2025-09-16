@@ -84,6 +84,8 @@ body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
 .field { margin-bottom:12px; }
 .field label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
 .field textarea, .field input { width:100%; padding:10px; background:#0b1220; color:var(--text); border:1px solid var(--border); border-radius:8px; }
+.field textarea { resize: none; }
+.resize-vertical { resize: vertical !important; }
 .field.small-title label { font-size:16px; color:#e2e8f0; font-weight:600; margin-top:8px; }
 .field.compact textarea { min-height:0; }
 .suggestions { width:360px; border-left:1px solid var(--border); padding:12px; overflow:auto; }
@@ -94,6 +96,21 @@ body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
 .sugg-item .title { font-size:13px; }
 .sugg-item .score { font-size:12px; color:var(--muted); }
 .muted { color: var(--muted); font-size:12px; }
+
+/* Rich Editor */
+.rich-editor { border:1px solid var(--border); border-radius:8px; background:#0b1220; }
+.rich-toolbar { display:flex; flex-wrap:wrap; gap:6px; padding:8px; border-bottom:1px solid var(--border); position:sticky; top:0; background:#0b1220; z-index:1; }
+.rich-editor .btn { padding:4px 8px; }
+.rich-editor-content { min-height: 420px; padding: 12px; outline: none; }
+.rich-editor-content pre { background:#0a0f1a; padding:10px; border-radius:6px; overflow:auto; }
+.rich-editor-content code { background:#0a0f1a; padding:2px 4px; border-radius:4px; }
+.rich-editor-content table { width:100%; border-collapse: collapse; }
+.rich-editor-content table th, .rich-editor-content table td { border:1px solid var(--border); padding:6px; }
+
+/* Rich editor boxed container so rest of UI stays visible even on failure */
+.rich-box { border:1px solid var(--border); border-radius:8px; background:#0b1220; display:flex; flex-direction:column; max-height:60vh; }
+.rich-box-toolbar { display:flex; gap:8px; border-bottom:1px solid var(--border); padding:8px; }
+.rich-box-body { padding:0; overflow:auto; }
 
 /* Sidebar bottom all-fields search */
 .sidebar-bottom { border-top:1px solid var(--border); padding:8px 12px; }
