@@ -445,7 +445,14 @@ const clientDist = path.resolve(__dirname, '..', '..', 'client', 'dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
   app.get('*', (req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
+    const filePath = path.join(clientDist, 'index.html');
+    try {
+      const html = fs.readFileSync(filePath);
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch {
+      res.sendFile(filePath);
+    }
   });
 }
 
